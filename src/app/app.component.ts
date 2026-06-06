@@ -594,6 +594,7 @@ export class AppComponent implements OnInit {
   onCanvasClick(): void {
     this.selectedNodeId = null;
     this.selectedSegmentId = null;
+    this.selectedSupplyNodeId = null;
     if (!this.showNodeForm && !this.showSegmentForm) {
     }
   }
@@ -650,6 +651,9 @@ export class AppComponent implements OnInit {
     if (confirm('确定要删除此节点吗？相关联的绳段也将被删除。')) {
       this.caveGraphService.deleteNode(nodeId);
       this.selectedNodeId = null;
+      if (this.selectedSupplyNodeId === nodeId) {
+        this.selectedSupplyNodeId = null;
+      }
       this.showSnackBar('节点已删除');
     }
   }
@@ -831,9 +835,14 @@ export class AppComponent implements OnInit {
       this.caveGraphService.clearAll();
       this.selectedNodeId = null;
       this.selectedSegmentId = null;
+      this.selectedSupplyNodeId = null;
       this.selectedPaths = [];
       this.routeComparison = null;
       this.simulationResult = null;
+      this.highlightPathNodes = [];
+      this.highlightPathSegments = [];
+      this.emergencyRouteNodes = [];
+      this.emergencyRouteSegments = [];
       this.showSnackBar('所有数据已清空');
     }
   }

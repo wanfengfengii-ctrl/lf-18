@@ -1509,6 +1509,11 @@ export class CaveGraphService {
     this.segments$.next([]);
     this.nextNodeId = 1;
     this.nextSegmentId = 1;
+    this.consumptionRates$.next(JSON.parse(JSON.stringify(DEFAULT_CONSUMPTION_RATES)));
+    this.estimatedDurationHours$.next(4);
+    this.simulationMode$.next(false);
+    this.simulatedRemovedNodes$.next([]);
+    this.simulatedRemovedSegments$.next([]);
   }
 
   loadSampleData(): void {

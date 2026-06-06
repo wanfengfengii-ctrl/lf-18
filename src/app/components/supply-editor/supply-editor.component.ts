@@ -179,6 +179,14 @@ import {
               </div>
 
               <mat-form-field appearance="fill" class="full-width">
+                <mat-label>有效期至</mat-label>
+                <input matInput [matDatepicker]="picker" formControlName="expirationDate">
+                <mat-hint *ngIf="!supplyForm.get('expirationDate')?.value">可选，不填表示长期有效</mat-hint>
+                <mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
+                <mat-datepicker #picker></mat-datepicker>
+              </mat-form-field>
+
+              <mat-form-field appearance="fill" class="full-width">
                 <mat-label>备注</mat-label>
                 <textarea matInput formControlName="notes" rows="2"></textarea>
               </mat-form-field>

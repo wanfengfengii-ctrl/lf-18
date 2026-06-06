@@ -16,7 +16,20 @@ import {
   RouteComparison,
   SimulationResult,
   GraphHighlight,
-  TraversalDirection
+  TraversalDirection,
+  SupplyItem,
+  SupplyType,
+  SupplyAdequacyLevel,
+  SupplyAdequacyItem,
+  NodeSupplyAssessment,
+  SupplyPlacementRecommendation,
+  EmergencySupplyRoute,
+  SupplyAnalysis,
+  SupplyConsumptionRate,
+  SUPPLY_TYPE_MAP,
+  SUPPLY_PRIORITY_MAP,
+  SUPPLY_ADEQUACY_MAP,
+  DEFAULT_CONSUMPTION_RATES
 } from '../models/cave-graph.model';
 
 @Injectable({
@@ -34,6 +47,10 @@ export class CaveGraphService {
   private simulationMode$ = new BehaviorSubject<boolean>(false);
   private simulatedRemovedNodes$ = new BehaviorSubject<string[]>([]);
   private simulatedRemovedSegments$ = new BehaviorSubject<string[]>([]);
+  private consumptionRates$ = new BehaviorSubject<SupplyConsumptionRate[]>(
+    JSON.parse(JSON.stringify(DEFAULT_CONSUMPTION_RATES))
+  );
+  private estimatedDurationHours$ = new BehaviorSubject<number>(8);
 
   private nextNodeId = 1;
   private nextSegmentId = 1;
@@ -88,6 +105,74 @@ export class CaveGraphService {
     return this.simulationMode$.asObservable();
   }
 
+  getConsumptionRates(): Observable<SupplyConsumptionRate[]> {
+    return this.consumptionRates$.asObservable();
+  }
+
+  get consumptionRates(): SupplyConsumptionRate[] {
+    return this.consumptionRates$.value;
+  }
+
+  getEstimatedDurationHours(): Observable<number> {
+    return this.estimatedDurationHours$.asObservable();
+  }
+
+  get estimatedDurationHours(): number {
+    return this.estimatedDurationHours$.value;
+  }
+
+  setConsumptionRates(rates: SupplyConsumptionRate[]): void {
+    this.consumptionRates$.next([...rates]);
+  }
+
+  setEstimatedDurationHours(hours: number): void {
+    this.estimatedDurationHours$.next(Math.max(1, hours));
+  }
+
+  getSupplyNodes(): CaveNode[] {
+    return this.nodes.filter(n => n.type === 'supply' && !n.isBlocked);
+  }
+
+  getNodeSupplies(nodeId: string): SupplyItem[] {
+    const node = this.nodes.find(n => n.id === nodeId);
+    return node?.supplies ? [...node.supplies] : [];
+  }
+
+  updateNodeSupplies(nodeId: string, supplies: SupplyItem[]): boolean {
+    const node = this.nodes.find(n => n.id === nodeId);
+    if (!node) return false;
+    this.updateNode(nodeId, { supplies: [...supplies] });
+    return true;
+  }
+
+  addSupplyItem(nodeId: string, item: SupplyItem): boolean {
+    const supplies = this.getNodeSupplies(nodeId);
+    const existingIndex = supplies.findIndex(s => s.type === item.type);
+    if (existingIndex >= 0) {
+      supplies[existingIndex] = { ...item };
+    } else {
+      supplies.push({ ...item });
+    }
+    return this.updateNodeSupplies(nodeId, supplies);
+  }
+
+  removeSupplyItem(nodeId: string, supplyType: SupplyType): boolean {
+    const supplies = this.getNodeSupplies(nodeId);
+    const filtered = supplies.filter(s => s.type !== supplyType);
+    return this.updateNodeSupplies(nodeId, filtered);
+  }
+
+  getTotalSuppliesWeight(nodeId: string): number {
+    const supplies = this.getNodeSupplies(nodeId);
+    return supplies.reduce((sum, s) => sum + s.quantity * s.unitWeight, 0);
+  }
+
+  getSupplyNodesWithSupplies(): CaveNode[] {
+    return this.nodes.filter(n => 
+      n.type === 'supply' && !n.isBlocked && n.supplies && n.supplies.length > 0
+    );
+  }
+
   addNode(node: Omit<CaveNode, 'id'> & { id?: string }): CaveNode {
     const id = node.id || `node-${this.nextNodeId++}`;
     if (this.nodes.some(n => n.id === id)) {
@@ -101,7 +186,8 @@ export class CaveGraphService {
       x: node.x,
       y: node.y,
       maxLoad: node.maxLoad,
-      isBlocked: node.isBlocked || false
+      isBlocked: node.isBlocked || false,
+      supplies: node.supplies ? [...node.supplies] : undefined
     };
     const updated = [...this.nodes, newNode];
     this.nodes$.next(updated);
@@ -471,9 +557,17 @@ export class CaveGraphService {
   }
 
   getDisconnectedNodes(): string[] {
-    const entranceNodes = this.nodes.filter(n => n.type === 'entrance' && !n.isBlocked).map(n => n.id);
+    const simMode = this.isSimulationMode;
+    const simRemovedNodes = this.simulatedRemovedNodes;
+
+    const entranceNodes = this.nodes.filter(
+      n => n.type === 'entrance' && !n.isBlocked && !(simMode && simRemovedNodes.includes(n.id))
+    ).map(n => n.id);
+
     if (entranceNodes.length === 0) {
-      return this.nodes.filter(n => !n.isBlocked).map(n => n.id);
+      return this.nodes.filter(
+        n => !n.isBlocked && !(simMode && simRemovedNodes.includes(n.id))
+      ).map(n => n.id);
     }
 
     const visited = new Set<string>();
@@ -492,28 +586,406 @@ export class CaveGraphService {
       }
     }
 
-    return this.nodes.filter(n => !n.isBlocked && !visited.has(n.id)).map(n => n.id);
+    return this.nodes.filter(
+      n => !n.isBlocked && !(simMode && simRemovedNodes.includes(n.id)) && !visited.has(n.id)
+    ).map(n => n.id);
+  }
+
+  private calculateSupplyRequirements(distance: number, teamSize: number, riskLevel: RiskLevel): Record<SupplyType, number> {
+    const rates = this.consumptionRates;
+    const hours = this.estimatedDurationHours;
+    const riskMultiplier = this.riskOrder[riskLevel] * 0.2 + 1;
+    const distanceFactor = Math.max(1, distance / 100);
+
+    const requirements: Record<SupplyType, number> = {
+      oxygen: 0,
+      medicine: 0,
+      lighting: 0,
+      battery: 0,
+      food: 0
+    };
+
+    for (const rate of rates) {
+      const baseNeed = rate.perPersonPerHour * teamSize * hours * riskMultiplier;
+      const distanceNeed = rate.perPersonPerHour * teamSize * distanceFactor * 2;
+      requirements[rate.type] = Math.ceil(baseNeed + distanceNeed);
+    }
+
+    return requirements;
+  }
+
+  private getAdequacyLevel(adequacy: number): SupplyAdequacyLevel {
+    if (adequacy >= 1.5) return 'sufficient';
+    if (adequacy >= 1.0) return 'warning';
+    if (adequacy >= 0.5) return 'deficit';
+    return 'critical';
+  }
+
+  assessNodeSupplyAdequacy(nodeId: string): NodeSupplyAssessment | null {
+    const node = this.nodes.find(n => n.id === nodeId);
+    if (!node || node.isBlocked) return null;
+
+    const teamSize = this.teamConfig.members.length;
+    const paths = this.findPathsToEntrance(nodeId);
+    const avgDistance = paths.length > 0 
+      ? paths.reduce((sum, p) => sum + p.totalLength, 0) / paths.length 
+      : 100;
+    const maxRisk = paths.length > 0 
+      ? paths[0].maxRisk 
+      : 'medium';
+
+    const requirements = this.calculateSupplyRequirements(avgDistance, teamSize, maxRisk);
+    const supplies = node.supplies || [];
+    const rates = this.consumptionRates;
+
+    const adequacyItems: SupplyAdequacyItem[] = rates.map(rate => {
+      const supply = supplies.find(s => s.type === rate.type);
+      const available = supply?.quantity || 0;
+      const required = requirements[rate.type];
+      const adequacy = required > 0 ? available / required : 999;
+      const daysRemaining = rate.perPersonPerHour > 0 && teamSize > 0
+        ? available / (rate.perPersonPerHour * teamSize * 24)
+        : 999;
+
+      return {
+        type: rate.type,
+        available,
+        required,
+        adequacy,
+        level: this.getAdequacyLevel(adequacy),
+        daysRemaining
+      };
+    });
+
+    const overallLevel = this.getOverallAdequacyLevel(adequacyItems);
+    const totalWeight = supplies.reduce((sum, s) => sum + s.quantity * s.unitWeight, 0);
+
+    const nearestSupply = this.findNearestSupplyPoint(nodeId);
+    const reachableSupplies = this.findReachableSupplyPoints(nodeId);
+
+    return {
+      nodeId,
+      nodeName: node.name,
+      totalSuppliesWeight: totalWeight,
+      adequacyItems,
+      overallLevel,
+      nearestSupplyPoint: nearestSupply?.nodeId,
+      distanceToSupply: nearestSupply?.distance || 0,
+      reachableSupplyPoints: reachableSupplies.map(s => s.nodeId)
+    };
+  }
+
+  private getOverallAdequacyLevel(items: SupplyAdequacyItem[]): SupplyAdequacyLevel {
+    if (items.length === 0) return 'sufficient';
+    const priorityOrder: SupplyAdequacyLevel[] = ['critical', 'deficit', 'warning', 'sufficient'];
+    for (const level of priorityOrder) {
+      const count = items.filter(i => i.level === level).length;
+      if (count >= 2 || (count >= 1 && level === 'critical')) {
+        return level;
+      }
+    }
+    const hasWarning = items.some(i => i.level === 'warning');
+    return hasWarning ? 'warning' : 'sufficient';
+  }
+
+  findNearestSupplyPoint(fromNodeId: string): { nodeId: string; distance: number; path: PathResult } | null {
+    const supplyNodes = this.getSupplyNodesWithSupplies();
+    if (supplyNodes.length === 0) return null;
+    if (supplyNodes.some(n => n.id === fromNodeId)) {
+      return { nodeId: fromNodeId, distance: 0, path: { path: [fromNodeId], totalLength: 0, maxRisk: 'low', riskScore: 0, avgRisk: 0, segments: [] } };
+    }
+
+    let best: { nodeId: string; distance: number; path: PathResult } | null = null;
+
+    for (const supplyNode of supplyNodes) {
+      const paths = this.findPathsBetween(fromNodeId, supplyNode.id);
+      if (paths.length > 0) {
+        const shortest = paths[0];
+        if (!best || shortest.totalLength < best.distance) {
+          best = { nodeId: supplyNode.id, distance: shortest.totalLength, path: shortest };
+        }
+      }
+    }
+
+    return best;
+  }
+
+  findReachableSupplyPoints(fromNodeId: string): { nodeId: string; distance: number; path: PathResult }[] {
+    const supplyNodes = this.getSupplyNodesWithSupplies();
+    const results: { nodeId: string; distance: number; path: PathResult }[] = [];
+
+    if (supplyNodes.some(n => n.id === fromNodeId)) {
+      results.push({ 
+        nodeId: fromNodeId, 
+        distance: 0, 
+        path: { path: [fromNodeId], totalLength: 0, maxRisk: 'low', riskScore: 0, avgRisk: 0, segments: [] } 
+      });
+    }
+
+    for (const supplyNode of supplyNodes) {
+      if (supplyNode.id === fromNodeId) continue;
+      const paths = this.findPathsBetween(fromNodeId, supplyNode.id);
+      if (paths.length > 0) {
+        results.push({ nodeId: supplyNode.id, distance: paths[0].totalLength, path: paths[0] });
+      }
+    }
+
+    return results.sort((a, b) => a.distance - b.distance);
+  }
+
+  private findPathsBetween(sourceId: string, targetId: string): PathResult[] {
+    const results: PathResult[] = [];
+    const visited = new Set<string>();
+    const adjacency = this.buildAdjacencyList(true);
+
+    const dfs = (currentId: string, path: string[], segPath: string[], totalLength: number, maxRisk: RiskLevel, totalRisk: number, depth: number) => {
+      if (currentId === targetId) {
+        results.push({
+          path: [...path],
+          totalLength,
+          maxRisk,
+          riskScore: this.calculateRiskScore(totalLength, maxRisk),
+          avgRisk: depth > 0 ? totalRisk / depth : 0,
+          segments: [...segPath]
+        });
+        return;
+      }
+      if (visited.has(currentId)) return;
+      if (depth > 50) return;
+      visited.add(currentId);
+
+      const neighbors = adjacency.get(currentId) || [];
+      for (const { targetId: nextId, segment } of neighbors) {
+        if (!visited.has(nextId)) {
+          const newRisk = this.maxRiskLevel(maxRisk, segment.riskLevel);
+          const riskValue = this.riskOrder[segment.riskLevel];
+          dfs(nextId, [...path, nextId], [...segPath, segment.id], totalLength + segment.length, newRisk, totalRisk + riskValue, depth + 1);
+        }
+      }
+      visited.delete(currentId);
+    };
+
+    dfs(sourceId, [sourceId], [], 0, 'low', 0, 0);
+    return results.sort((a, b) => a.totalLength - b.totalLength);
+  }
+
+  recommendSupplyPlacements(maxRecommendations: number = 3): SupplyPlacementRecommendation[] {
+    const allNodes = this.nodes.filter(n => !n.isBlocked && n.type !== 'danger');
+    const existingSupplyNodeIds = new Set(this.getSupplyNodesWithSupplies().map(n => n.id));
+    const teamSize = this.teamConfig.members.length;
+
+    const candidates: SupplyPlacementRecommendation[] = [];
+
+    for (const node of allNodes) {
+      if (existingSupplyNodeIds.has(node.id)) continue;
+
+      const paths = this.findPathsToEntrance(node.id);
+      if (paths.length === 0) continue;
+
+      const distanceToEntrance = paths[0].totalLength;
+      const riskLevel = paths[0].maxRisk;
+      const connectedSegments = this.segments.filter(
+        s => !s.isBlocked && (s.sourceId === node.id || s.targetId === node.id)
+      );
+
+      let score = 0;
+      let reasons: string[] = [];
+
+      if (connectedSegments.length >= 3) {
+        score += 30;
+        reasons.push('位于路线交汇点');
+      }
+
+      if (distanceToEntrance > 50 && distanceToEntrance < 200) {
+        score += 25;
+        reasons.push('距离适中，便于前出补给');
+      }
+
+      if (riskLevel === 'high' || riskLevel === 'critical') {
+        score += 20;
+        reasons.push('高风险区域附近，应急需求大');
+      }
+
+      if (node.type === 'platform') {
+        score += 15;
+        reasons.push('平台节点，便于停留补给');
+      }
+
+      const nearbyAssessment = this.assessNodeSupplyAdequacy(node.id);
+      if (nearbyAssessment && (nearbyAssessment.overallLevel === 'deficit' || nearbyAssessment.overallLevel === 'critical')) {
+        score += 20;
+        reasons.push('周边物资不足');
+      }
+
+      const nearestSupply = this.findNearestSupplyPoint(node.id);
+      if (nearestSupply && nearestSupply.distance > 80) {
+        score += 15;
+        reasons.push('距最近补给点较远');
+      }
+
+      if (score > 20) {
+        const requiredSupplies = this.calculateSupplyRequirements(distanceToEntrance, teamSize, riskLevel);
+        const recommendedSupplies = Object.entries(requiredSupplies).map(([type, qty]) => ({
+          type: type as SupplyType,
+          quantity: Math.ceil(qty * 1.5)
+        }));
+
+        const coverageNodes = this.findNodesWithinDistance(node.id, 60);
+
+        candidates.push({
+          nodeId: node.id,
+          nodeName: node.name,
+          score,
+          reason: reasons.join('；'),
+          recommendedSupplies,
+          coverageNodes: coverageNodes
+        });
+      }
+    }
+
+    return candidates
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxRecommendations);
+  }
+
+  private findNodesWithinDistance(fromNodeId: string, maxDistance: number): string[] {
+    const result: string[] = [];
+    const allNodes = this.nodes.filter(n => !n.isBlocked && n.type !== 'danger');
+
+    for (const node of allNodes) {
+      if (node.id === fromNodeId) continue;
+      const paths = this.findPathsBetween(fromNodeId, node.id);
+      if (paths.length > 0 && paths[0].totalLength <= maxDistance) {
+        result.push(node.id);
+      }
+    }
+
+    return result;
+  }
+
+  calculateEmergencySupplyRoutes(): EmergencySupplyRoute[] {
+    const deficitNodes = this.getSupplyDeficitNodes();
+    const routes: EmergencySupplyRoute[] = [];
+
+    for (const nodeId of deficitNodes) {
+      const nearest = this.findNearestSupplyPoint(nodeId);
+      if (nearest && nearest.nodeId !== nodeId) {
+        routes.push({
+          fromNodeId: nodeId,
+          toSupplyNodeId: nearest.nodeId,
+          path: nearest.path.path,
+          segments: nearest.path.segments,
+          totalLength: nearest.distance,
+          maxRisk: nearest.path.maxRisk,
+          riskScore: nearest.path.riskScore
+        });
+      }
+    }
+
+    return routes.sort((a, b) => b.riskScore - a.riskScore);
+  }
+
+  getSupplyDeficitNodes(): string[] {
+    const results: string[] = [];
+    for (const node of this.nodes) {
+      if (node.isBlocked) continue;
+      const assessment = this.assessNodeSupplyAdequacy(node.id);
+      if (assessment && (assessment.overallLevel === 'deficit' || assessment.overallLevel === 'critical')) {
+        results.push(node.id);
+      }
+    }
+    return results;
+  }
+
+  getSupplyCriticalNodes(): string[] {
+    const results: string[] = [];
+    for (const node of this.nodes) {
+      if (node.isBlocked) continue;
+      const assessment = this.assessNodeSupplyAdequacy(node.id);
+      if (assessment && assessment.overallLevel === 'critical') {
+        results.push(node.id);
+      }
+    }
+    return results;
+  }
+
+  getSupplyAnalysis(): SupplyAnalysis {
+    const supplyNodes = this.getSupplyNodesWithSupplies();
+    const totalWeight = supplyNodes.reduce((sum, n) => sum + this.getTotalSuppliesWeight(n.id), 0);
+
+    const assessments: NodeSupplyAssessment[] = [];
+    for (const node of this.nodes) {
+      if (node.isBlocked) continue;
+      const assessment = this.assessNodeSupplyAdequacy(node.id);
+      if (assessment) {
+        assessments.push(assessment);
+      }
+    }
+
+    const deficitNodes = assessments.filter(a => a.overallLevel === 'deficit' || a.overallLevel === 'critical').map(a => a.nodeId);
+    const criticalNodes = assessments.filter(a => a.overallLevel === 'critical').map(a => a.nodeId);
+    const recommendations = this.recommendSupplyPlacements(3);
+    const emergencyRoutes = this.calculateEmergencySupplyRoutes();
+
+    return {
+      totalSupplyNodes: supplyNodes.length,
+      totalSuppliesWeight: totalWeight,
+      supplyAssessments: assessments,
+      deficitNodes,
+      criticalNodes,
+      placementRecommendations: recommendations,
+      emergencyRoutes,
+      consumptionRates: [...this.consumptionRates],
+      estimatedDurationHours: this.estimatedDurationHours
+    };
+  }
+
+  recalculateSupplyOnRouteChange(): void {
+    this.nodes$.next([...this.nodes]);
   }
 
   getAnalysis(): Observable<GraphAnalysis> {
-    return combineLatest([this.nodes$, this.segments$, this.teamConfig$]).pipe(
+    return combineLatest([
+      this.nodes$,
+      this.segments$,
+      this.teamConfig$,
+      this.consumptionRates$,
+      this.estimatedDurationHours$,
+      this.simulationMode$,
+      this.simulatedRemovedNodes$,
+      this.simulatedRemovedSegments$
+    ]).pipe(
       map(([nodes, segments, teamConfig]) => {
-        const totalLength = segments.filter(s => !s.isBlocked).reduce((sum, s) => sum + s.length, 0);
+        const simMode = this.isSimulationMode;
+        const simRemovedNodes = this.simulatedRemovedNodes;
+        const simRemovedSegments = this.simulatedRemovedSegments;
+
+        const totalLength = segments.filter(
+          s => !s.isBlocked && !(simMode && simRemovedSegments.includes(s.id))
+        ).reduce((sum, s) => sum + s.length, 0);
         const overloadedAnchors = this.getAnchorLoads().filter(a => a.isOverloaded);
         const disconnectedNodes = this.getDisconnectedNodes();
-        const entranceNodes = nodes.filter(n => n.type === 'entrance' && !n.isBlocked).map(n => n.id);
+        const entranceNodes = nodes.filter(
+          n => n.type === 'entrance' && !n.isBlocked && !(simMode && simRemovedNodes.includes(n.id))
+        ).map(n => n.id);
         const dynamicAnchorLoads = this.getDynamicAnchorLoads();
         const highlights = this.getGraphHighlights();
+        const supplyAnalysis = this.getSupplyAnalysis();
 
         return {
           totalLength,
-          nodeCount: nodes.filter(n => !n.isBlocked).length,
-          segmentCount: segments.filter(s => !s.isBlocked).length,
+          nodeCount: nodes.filter(
+            n => !n.isBlocked && !(simMode && simRemovedNodes.includes(n.id))
+          ).length,
+          segmentCount: segments.filter(
+            s => !s.isBlocked && !(simMode && simRemovedSegments.includes(s.id))
+          ).length,
           overloadedAnchors,
           disconnectedNodes,
           entranceNodes,
           dynamicAnchorLoads,
-          highlights
+          highlights,
+          supplyAnalysis
         };
       })
     );
@@ -538,12 +1010,26 @@ export class CaveGraphService {
       safestPath = bestPath ? bestPath.path : null;
     }
 
+    const supplyPoints = this.getSupplyNodesWithSupplies().map(n => n.id);
+    const supplyDeficitNodes = this.getSupplyDeficitNodes();
+    const supplyCriticalNodes = this.getSupplyCriticalNodes();
+    const recommendations = this.recommendSupplyPlacements(3).map(r => r.nodeId);
+    const emergencyRoutes = this.calculateEmergencySupplyRoutes().map(r => ({
+      segments: r.segments,
+      nodes: r.path
+    }));
+
     return {
       keyAnchors,
       bottleneckSegments,
       unreachableNodes,
       safestPath,
-      dangerZones
+      dangerZones,
+      supplyPoints,
+      supplyDeficitNodes,
+      supplyCriticalNodes,
+      recommendedSupplyPoints: recommendations,
+      emergencySupplyRoutes: emergencyRoutes
     };
   }
 
@@ -688,12 +1174,18 @@ export class CaveGraphService {
 
   private buildAdjacencyList(considerBlocked: boolean = true): Map<string, { targetId: string; segment: RopeSegment }[]> {
     const adjacency = new Map<string, { targetId: string; segment: RopeSegment }[]>();
+    const simMode = this.isSimulationMode;
+    const simRemovedNodes = this.simulatedRemovedNodes;
+    const simRemovedSegments = this.simulatedRemovedSegments;
+
     for (const segment of this.segments) {
       if (considerBlocked && segment.isBlocked) continue;
+      if (simMode && simRemovedSegments.includes(segment.id)) continue;
 
       const sourceNode = this.nodes.find(n => n.id === segment.sourceId);
       const targetNode = this.nodes.find(n => n.id === segment.targetId);
       if (considerBlocked && (sourceNode?.isBlocked || targetNode?.isBlocked)) continue;
+      if (simMode && (simRemovedNodes.includes(segment.sourceId) || simRemovedNodes.includes(segment.targetId))) continue;
 
       if (!adjacency.has(segment.sourceId)) {
         adjacency.set(segment.sourceId, []);
@@ -732,7 +1224,9 @@ export class CaveGraphService {
       createdAt: Date.now(),
       nodes: JSON.parse(JSON.stringify(this.nodes)),
       segments: JSON.parse(JSON.stringify(this.segments)),
-      teamConfig: JSON.parse(JSON.stringify(this.teamConfig))
+      teamConfig: JSON.parse(JSON.stringify(this.teamConfig)),
+      consumptionRates: JSON.parse(JSON.stringify(this.consumptionRates)),
+      estimatedDurationHours: this.estimatedDurationHours
     };
     const versions = [...this.routeVersions, version];
     this.routeVersions$.next(versions);
@@ -745,6 +1239,12 @@ export class CaveGraphService {
       this.nodes$.next(JSON.parse(JSON.stringify(version.nodes)));
       this.segments$.next(JSON.parse(JSON.stringify(version.segments)));
       this.teamConfig$.next(JSON.parse(JSON.stringify(version.teamConfig)));
+      if (version.consumptionRates) {
+        this.consumptionRates$.next(JSON.parse(JSON.stringify(version.consumptionRates)));
+      }
+      if (version.estimatedDurationHours !== undefined) {
+        this.estimatedDurationHours$.next(version.estimatedDurationHours);
+      }
     }
   }
 
@@ -1025,7 +1525,27 @@ export class CaveGraphService {
       { id: 'anchor-3', name: '分支锚点', type: 'anchor', x: 650, y: 450, description: '分支路线锚点', maxLoad: 300 },
       { id: 'platform-3', name: '东侧平台', type: 'platform', x: 750, y: 380, description: '东侧分支平台' },
       { id: 'anchor-4', name: '主通道锚点', type: 'anchor', x: 400, y: 420, description: '主通道关键锚点', maxLoad: 450 },
-      { id: 'entrance-2', name: '紧急出口', type: 'entrance', x: 150, y: 350, description: '备用紧急出口' }
+      { id: 'entrance-2', name: '紧急出口', type: 'entrance', x: 150, y: 350, description: '备用紧急出口' },
+      {
+        id: 'supply-1', name: '一号补给站', type: 'supply', x: 350, y: 220, description: '入口附近主要补给站',
+        supplies: [
+          { type: 'oxygen', quantity: 8, unitWeight: 5, minSafetyStock: 4, priority: 'critical' },
+          { type: 'medicine', quantity: 15, unitWeight: 0.5, minSafetyStock: 10, priority: 'high' },
+          { type: 'lighting', quantity: 12, unitWeight: 0.3, minSafetyStock: 6, priority: 'high' },
+          { type: 'battery', quantity: 20, unitWeight: 0.8, minSafetyStock: 10, priority: 'medium' },
+          { type: 'food', quantity: 30, unitWeight: 0.5, minSafetyStock: 15, priority: 'medium' }
+        ]
+      },
+      {
+        id: 'supply-2', name: '二号补给站', type: 'supply', x: 570, y: 420, description: '地下深处备用补给站',
+        supplies: [
+          { type: 'oxygen', quantity: 5, unitWeight: 5, minSafetyStock: 3, priority: 'critical' },
+          { type: 'medicine', quantity: 8, unitWeight: 0.5, minSafetyStock: 5, priority: 'high' },
+          { type: 'lighting', quantity: 8, unitWeight: 0.3, minSafetyStock: 4, priority: 'high' },
+          { type: 'battery', quantity: 12, unitWeight: 0.8, minSafetyStock: 6, priority: 'medium' },
+          { type: 'food', quantity: 20, unitWeight: 0.5, minSafetyStock: 10, priority: 'medium' }
+        ]
+      }
     ];
 
     const sampleSegments: RopeSegment[] = [
@@ -1039,13 +1559,17 @@ export class CaveGraphService {
       { id: 'seg-8', sourceId: 'platform-1', targetId: 'danger-1', length: 12, slope: 5, maxLoad: 100, riskLevel: 'high', description: '通往落石区' },
       { id: 'seg-9', sourceId: 'anchor-1', targetId: 'anchor-4', length: 35, slope: 60, maxLoad: 250, riskLevel: 'medium', description: '主通道绳段', traversalDirection: 'bidirectional' },
       { id: 'seg-10', sourceId: 'anchor-4', targetId: 'platform-2', length: 20, slope: 35, maxLoad: 220, riskLevel: 'low', description: '主通道下段' },
-      { id: 'seg-11', sourceId: 'platform-1', targetId: 'entrance-2', length: 25, slope: -20, maxLoad: 180, riskLevel: 'medium', description: '通往紧急出口' }
+      { id: 'seg-11', sourceId: 'platform-1', targetId: 'entrance-2', length: 25, slope: -20, maxLoad: 180, riskLevel: 'medium', description: '通往紧急出口' },
+      { id: 'seg-12', sourceId: 'anchor-1', targetId: 'supply-1', length: 8, slope: 20, maxLoad: 150, riskLevel: 'low', description: '通往一号补给站' },
+      { id: 'seg-13', sourceId: 'supply-1', targetId: 'platform-1', length: 12, slope: 25, maxLoad: 150, riskLevel: 'low', description: '补给站至第一平台' },
+      { id: 'seg-14', sourceId: 'anchor-2', targetId: 'supply-2', length: 10, slope: 30, maxLoad: 150, riskLevel: 'low', description: '通往二号补给站' },
+      { id: 'seg-15', sourceId: 'supply-2', targetId: 'platform-2', length: 15, slope: 40, maxLoad: 150, riskLevel: 'medium', description: '补给站至地下大厅' }
     ];
 
     this.nodes$.next(sampleNodes);
     this.segments$.next(sampleSegments);
-    this.nextNodeId = 12;
-    this.nextSegmentId = 12;
+    this.nextNodeId = 14;
+    this.nextSegmentId = 16;
 
     this.teamConfig$.next({
       members: [
@@ -1058,5 +1582,8 @@ export class CaveGraphService {
       safetyFactor: 1.5
     });
     this.nextMemberId = 5;
+
+    this.consumptionRates$.next(JSON.parse(JSON.stringify(DEFAULT_CONSUMPTION_RATES)));
+    this.estimatedDurationHours$.next(8);
   }
 }

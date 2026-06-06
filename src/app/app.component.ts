@@ -7,6 +7,7 @@ import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatDividerModule } from '@angular/material/divider';
 import { CaveGraphService } from './services/cave-graph.service';
 import {
   CaveNode,
@@ -14,11 +15,17 @@ import {
   GraphAnalysis,
   PathResult,
   NODE_TYPE_MAP,
+  SUPPLY_TYPE_MAP,
   TeamConfig,
   RouteVersion,
   RouteComparison,
   SimulationResult,
-  GraphHighlight
+  GraphHighlight,
+  SupplyAnalysis,
+  SupplyItem,
+  SupplyPlacementRecommendation,
+  EmergencySupplyRoute,
+  SupplyConsumptionRate
 } from './models/cave-graph.model';
 import { CytoscapeGraphComponent } from './components/cytoscape-graph/cytoscape-graph.component';
 import { NodeEditorComponent } from './components/node-editor/node-editor.component';
@@ -29,6 +36,8 @@ import { TeamConfigComponent } from './components/team-config/team-config.compon
 import { SimulationPanelComponent } from './components/simulation-panel/simulation-panel.component';
 import { RouteVersionPanelComponent } from './components/route-version-panel/route-version-panel.component';
 import { OverloadConfirmDialogComponent } from './components/overload-confirm-dialog/overload-confirm-dialog.component';
+import { SupplyPanelComponent } from './components/supply-panel/supply-panel.component';
+import { SupplyEditorComponent } from './components/supply-editor/supply-editor.component';
 
 @Component({
   selector: 'app-root',
@@ -42,6 +51,7 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
     MatTabsModule,
     MatSnackBarModule,
     MatDialogModule,
+    MatDividerModule,
     CytoscapeGraphComponent,
     NodeEditorComponent,
     SegmentEditorComponent,
@@ -49,7 +59,9 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
     PathAnalysisComponent,
     TeamConfigComponent,
     SimulationPanelComponent,
-    RouteVersionPanelComponent
+    RouteVersionPanelComponent,
+    SupplyPanelComponent,
+    SupplyEditorComponent
   ],
   template: `
     <div class="app-container">
@@ -125,6 +137,18 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
               <div class="legend-item">
                 <span class="legend-shape safe-route"></span>
                 <span class="legend-label">安全路线</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape supply-point"></span>
+                <span class="legend-label">补给站</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape supply-deficit"></span>
+                <span class="legend-label">物资不足</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape emergency-route"></span>
+                <span class="legend-label">应急路线</span>
               </div>
             </div>
           </div>
@@ -207,6 +231,28 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
                     [config]="teamConfig"
                     (configChange)="onTeamConfigChange($event)"
                   ></app-team-config>
+                </div>
+              </mat-tab>
+              <mat-tab label="物资">
+                <div class="tab-content">
+                  <app-supply-panel
+                    [supplyAnalysis]="supplyAnalysis"
+                    [nodeNames]="nodeNames"
+                    (nodeClick)="onSupplyNodeClick($event)"
+                    (routeClick)="onEmergencyRouteClick($event)"
+                    (addSupplyPoint)="onAddSupplyPoint($event)"
+                    (consumptionRatesChange)="onConsumptionRatesChange($event)"
+                    (durationChange)="onDurationChange($event)"
+                  ></app-supply-panel>
+                  <div *ngIf="selectedSupplyNode" class="supply-editor-section">
+                    <mat-divider></mat-divider>
+                    <app-supply-editor
+                      [supplies]="selectedSupplyNodeSupplies"
+                      [nodeName]="selectedSupplyNode.name"
+                      [nodeId]="selectedSupplyNode.id"
+                      (save)="onSupplySave($event)"
+                    ></app-supply-editor>
+                  </div>
                 </div>
               </mat-tab>
               <mat-tab label="演练">
@@ -317,6 +363,24 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
       background: #00e676;
       border-radius: 2px;
     }
+    .legend-shape.supply-point {
+      background: #00bcd4;
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      border-radius: 0;
+    }
+    .legend-shape.supply-deficit {
+      background: transparent;
+      border: 2px dashed #ff9800;
+      border-radius: 50%;
+    }
+    .legend-shape.emergency-route {
+      background: transparent;
+      border: 2px dashed #ffeb3b;
+      width: 20px;
+      height: 0;
+      margin-top: 8px;
+      border-radius: 0;
+    }
     .legend-divider {
       height: 1px;
       background: rgba(0,0,0,0.1);
@@ -372,6 +436,9 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
       margin: 4px 0;
       font-size: 13px;
     }
+    .supply-editor-section {
+      margin-top: 12px;
+    }
   `]
 })
 export class AppComponent implements OnInit {
@@ -406,12 +473,27 @@ export class AppComponent implements OnInit {
   highlightPathNodes: string[] = [];
   highlightPathSegments: string[] = [];
 
+  supplyAnalysis: SupplyAnalysis | null = null;
+  selectedSupplyNodeId: string | null = null;
+  emergencyRouteNodes: string[] = [];
+  emergencyRouteSegments: string[] = [];
+
+  get selectedSupplyNode(): CaveNode | null {
+    if (!this.selectedSupplyNodeId) return null;
+    return this.nodes.find(n => n.id === this.selectedSupplyNodeId) || null;
+  }
+
+  get selectedSupplyNodeSupplies(): SupplyItem[] {
+    return this.selectedSupplyNode?.supplies || [];
+  }
+
   readonly legendItems = [
     { label: '入口', color: NODE_TYPE_MAP.entrance.color, shape: 'square' },
     { label: '平台', color: NODE_TYPE_MAP.platform.color, shape: 'square' },
     { label: '竖井', color: NODE_TYPE_MAP.shaft.color, shape: 'round' },
     { label: '锚点', color: NODE_TYPE_MAP.anchor.color, shape: 'round' },
-    { label: '危险区域', color: NODE_TYPE_MAP.danger.color, shape: 'round' }
+    { label: '危险区域', color: NODE_TYPE_MAP.danger.color, shape: 'round' },
+    { label: '补给站', color: NODE_TYPE_MAP.supply.color, shape: 'hexagon' }
   ];
 
   constructor(
@@ -434,6 +516,7 @@ export class AppComponent implements OnInit {
       this.disconnectedNodes = analysis.disconnectedNodes;
       this.overloadAnchors = analysis.overloadedAnchors.map(a => a.nodeId);
       this.highlights = analysis.highlights || null;
+      this.supplyAnalysis = analysis.supplyAnalysis || null;
     });
 
     this.caveGraphService.getTeamConfig().subscribe(config => {
@@ -759,6 +842,68 @@ export class AppComponent implements OnInit {
     if (this.graphComponent) {
       this.graphComponent.fit();
     }
+  }
+
+  onSupplyNodeClick(nodeId: string): void {
+    this.selectedSupplyNodeId = nodeId;
+    this.selectedNodeId = nodeId;
+    this.selectedSegmentId = null;
+  }
+
+  onEmergencyRouteClick(route: EmergencySupplyRoute): void {
+    this.emergencyRouteNodes = route.path;
+    this.emergencyRouteSegments = route.segments;
+    this.showSnackBar(`应急补给路线: ${this.getNodeName(route.fromNodeId)} → ${this.getNodeName(route.toSupplyNodeId)}`);
+  }
+
+  onAddSupplyPoint(rec: SupplyPlacementRecommendation): void {
+    const node = this.nodes.find(n => n.id === rec.nodeId);
+    if (!node) return;
+
+    if (node.type === 'supply') {
+      this.selectedSupplyNodeId = rec.nodeId;
+      this.showSnackBar('该节点已是补给站');
+      return;
+    }
+
+    if (confirm(`确定要将 ${node.name} 设为补给站吗？`)) {
+      const supplies: SupplyItem[] = rec.recommendedSupplies.map(s => {
+        const supplyInfo = SUPPLY_TYPE_MAP[s.type];
+        return {
+          type: s.type,
+          quantity: s.quantity,
+          unitWeight: supplyInfo.defaultUnitWeight,
+          minSafetyStock: supplyInfo.defaultMinStock,
+          priority: supplyInfo.defaultPriority
+        };
+      });
+
+      this.caveGraphService.updateNode(rec.nodeId, {
+        type: 'supply',
+        supplies
+      });
+      this.selectedSupplyNodeId = rec.nodeId;
+      this.showSnackBar('已设为补给站并添加推荐物资');
+    }
+  }
+
+  onConsumptionRatesChange(rates: SupplyConsumptionRate[]): void {
+    this.caveGraphService.setConsumptionRates(rates);
+  }
+
+  onDurationChange(hours: number): void {
+    this.caveGraphService.setEstimatedDurationHours(hours);
+  }
+
+  onSupplySave(supplies: SupplyItem[]): void {
+    if (!this.selectedSupplyNodeId) return;
+    this.caveGraphService.updateNodeSupplies(this.selectedSupplyNodeId, supplies);
+    this.showSnackBar('物资库存已更新');
+  }
+
+  private getNodeName(nodeId: string): string {
+    const node = this.nodes.find(n => n.id === nodeId);
+    return node?.name || nodeId;
   }
 
   private showSnackBar(message: string): void {

@@ -148,6 +148,50 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         }
       },
       {
+        selector: 'node.supply',
+        style: {
+          'background-color': NODE_TYPE_MAP.supply.color,
+          'shape': 'hexagon',
+          'width': 55,
+          'height': 55,
+          'border-color': '#006064',
+          'border-width': 3,
+          'shadow-color': '#00bcd4',
+          'shadow-blur': 10,
+          'shadow-opacity': 0.6
+        }
+      },
+      {
+        selector: 'node.supply-deficit',
+        style: {
+          'border-color': '#ff9800',
+          'border-width': 4,
+          'border-style': 'dashed'
+        }
+      },
+      {
+        selector: 'node.supply-critical',
+        style: {
+          'border-color': '#f44336',
+          'border-width': 5,
+          'border-style': 'double',
+          'shadow-color': '#f44336',
+          'shadow-blur': 12,
+          'shadow-opacity': 0.7
+        }
+      },
+      {
+        selector: 'node.recommended-supply',
+        style: {
+          'border-color': '#ffeb3b',
+          'border-width': 4,
+          'border-style': 'dashed',
+          'shadow-color': '#ffeb3b',
+          'shadow-blur': 8,
+          'shadow-opacity': 0.5
+        }
+      },
+      {
         selector: 'node.disconnected',
         style: {
           'border-color': '#ff0000',
@@ -311,6 +355,19 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         }
       },
       {
+        selector: 'edge.emergency-supply',
+        style: {
+          'width': 5,
+          'line-color': '#ffeb3b',
+          'target-arrow-color': '#ffeb3b',
+          'line-style': 'dashed',
+          'shadow-color': '#ffeb3b',
+          'shadow-blur': 10,
+          'shadow-opacity': 0.6,
+          'z-index': 4
+        }
+      },
+      {
         selector: 'edge.directional',
         style: {
           'target-arrow-shape': 'triangle',
@@ -365,6 +422,15 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
       if (this.highlightPath.includes(node.id)) {
         classes.push('safe-route');
       }
+      if (this.highlights?.supplyDeficitNodes?.includes(node.id)) {
+        classes.push('supply-deficit');
+      }
+      if (this.highlights?.supplyCriticalNodes?.includes(node.id)) {
+        classes.push('supply-critical');
+      }
+      if (this.highlights?.recommendedSupplyPoints?.includes(node.id)) {
+        classes.push('recommended-supply');
+      }
 
       elements.push({
         group: 'nodes',
@@ -394,6 +460,13 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
       }
       if (this.highlightPathSegments.includes(segment.id)) {
         classes.push('safe-route');
+      }
+
+      const isEmergencyRoute = this.highlights?.emergencySupplyRoutes?.some(
+        route => route.segments.includes(segment.id)
+      );
+      if (isEmergencyRoute) {
+        classes.push('emergency-supply');
       }
 
       if (segment.traversalDirection === 'sourceToTarget') {
@@ -578,6 +651,18 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         safeRouteEdges.style('width', `${width}px`);
       }
 
+      const supplyCriticalNodes = this.cy.nodes('node.supply-critical');
+      if (supplyCriticalNodes.length > 0) {
+        const shadowBlur = 8 + pulse * 8;
+        supplyCriticalNodes.style('shadow-blur', `${shadowBlur}px`);
+      }
+
+      const emergencyEdges = this.cy.edges('edge.emergency-supply');
+      if (emergencyEdges.length > 0) {
+        const width = 3 + pulse * 3;
+        emergencyEdges.style('width', `${width}px`);
+      }
+
       this.pulseAnimationTimer = requestAnimationFrame(animate);
     };
 
@@ -595,8 +680,10 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
     const hasKeyAnchors = this.highlights?.keyAnchors && this.highlights.keyAnchors.length > 0;
     const hasBottlenecks = this.highlights?.bottleneckSegments && this.highlights.bottleneckSegments.length > 0;
     const hasSafeRoute = this.highlightPath.length > 0 || this.highlightPathSegments.length > 0;
+    const hasSupplyCritical = this.highlights?.supplyCriticalNodes && this.highlights.supplyCriticalNodes.length > 0;
+    const hasEmergencyRoutes = this.highlights?.emergencySupplyRoutes && this.highlights.emergencySupplyRoutes.length > 0;
 
-    if (hasKeyAnchors || hasBottlenecks || hasSafeRoute) {
+    if (hasKeyAnchors || hasBottlenecks || hasSafeRoute || hasSupplyCritical || hasEmergencyRoutes) {
       this.startPulseAnimation();
     } else {
       this.stopPulseAnimation();

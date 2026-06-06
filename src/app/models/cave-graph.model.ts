@@ -8,6 +8,7 @@ export interface CaveNode {
   description?: string;
   x: number;
   y: number;
+  maxLoad?: number;
 }
 
 export interface RopeSegment {

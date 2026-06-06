@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { CaveGraphService } from './services/cave-graph.service';
 import { CaveNode, RopeSegment, GraphAnalysis, PathResult, NODE_TYPE_MAP } from './models/cave-graph.model';
 import { CytoscapeGraphComponent } from './components/cytoscape-graph/cytoscape-graph.component';
@@ -13,6 +14,7 @@ import { NodeEditorComponent } from './components/node-editor/node-editor.compon
 import { SegmentEditorComponent } from './components/segment-editor/segment-editor.component';
 import { StatsPanelComponent } from './components/stats-panel/stats-panel.component';
 import { PathAnalysisComponent } from './components/path-analysis/path-analysis.component';
+import { OverloadConfirmDialogComponent } from './components/overload-confirm-dialog/overload-confirm-dialog.component';
 
 @Component({
   selector: 'app-root',
@@ -25,6 +27,7 @@ import { PathAnalysisComponent } from './components/path-analysis/path-analysis.
     MatSidenavModule,
     MatTabsModule,
     MatSnackBarModule,
+    MatDialogModule,
     CytoscapeGraphComponent,
     NodeEditorComponent,
     SegmentEditorComponent,
@@ -270,7 +273,8 @@ export class AppComponent implements OnInit {
 
   constructor(
     private caveGraphService: CaveGraphService,
-    private snackBar: MatSnackBar
+    private snackBar: MatSnackBar,
+    private dialog: MatDialog
   ) {}
 
   ngOnInit(): void {
@@ -400,6 +404,37 @@ export class AppComponent implements OnInit {
   }
 
   onSaveSegment(segment: RopeSegment): void {
+    try {
+      const overloadCheck = this.caveGraphService.checkSegmentOverload(
+        segment.sourceId,
+        segment.targetId,
+        segment.maxLoad,
+        this.selectedSegmentId || undefined
+      );
+
+      if (overloadCheck.overloadedAnchors.length > 0) {
+        const dialogRef = this.dialog.open(OverloadConfirmDialogComponent, {
+          width: '400px',
+          data: {
+            overloadedAnchors: overloadCheck.overloadedAnchors,
+            segmentName: segment.length + 'm 绳段'
+          }
+        });
+
+        dialogRef.afterClosed().subscribe(confirmed => {
+          if (confirmed) {
+            this.doSaveSegment(segment);
+          }
+        });
+      } else {
+        this.doSaveSegment(segment);
+      }
+    } catch (e: any) {
+      this.showSnackBar(e.message || '操作失败');
+    }
+  }
+
+  private doSaveSegment(segment: RopeSegment): void {
     try {
       if (this.selectedSegmentId) {
         this.caveGraphService.updateSegment(segment.id, {

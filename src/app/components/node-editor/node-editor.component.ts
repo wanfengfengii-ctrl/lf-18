@@ -50,12 +50,24 @@ import { CaveNode, NodeType, NODE_TYPE_MAP } from '../../models/cave-graph.model
 
           <mat-form-field appearance="fill" class="full-width">
             <mat-label>节点类型</mat-label>
-            <mat-select formControlName="type">
+            <mat-select formControlName="type" (selectionChange)="onTypeChange()">
               <mat-option *ngFor="let type of nodeTypes" [value]="type.value">
                 <span class="type-dot" [style.backgroundColor]="type.color"></span>
                 {{ type.label }}
               </mat-option>
             </mat-select>
+          </mat-form-field>
+
+          <mat-form-field appearance="fill" class="full-width" *ngIf="nodeForm.get('type')?.value === 'anchor'">
+            <mat-label>锚点承重上限 (千克)</mat-label>
+            <input matInput type="number" formControlName="maxLoad" min="1" step="1">
+            <mat-hint>该锚点能够承受的最大总负载</mat-hint>
+            <mat-error *ngIf="nodeForm.get('maxLoad')?.hasError('required')">
+              锚点必须填写承重上限
+            </mat-error>
+            <mat-error *ngIf="nodeForm.get('maxLoad')?.hasError('min')">
+              承重上限必须大于零
+            </mat-error>
           </mat-form-field>
 
           <mat-form-field appearance="fill" class="full-width">
@@ -143,6 +155,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
       id: ['', [Validators.required]],
       name: ['', [Validators.required]],
       type: ['platform' as NodeType, [Validators.required]],
+      maxLoad: [null],
       description: [''],
       x: [0],
       y: [0]
@@ -155,6 +168,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
         id: this.node.id,
         name: this.node.name,
         type: this.node.type,
+        maxLoad: this.node.maxLoad ?? null,
         description: this.node.description || '',
         x: this.node.x,
         y: this.node.y
@@ -164,12 +178,35 @@ export class NodeEditorComponent implements OnInit, OnChanges {
         id: '',
         name: '',
         type: 'platform',
+        maxLoad: null,
         description: '',
         x: this.defaultPosition.x,
         y: this.defaultPosition.y
       });
     }
     this.updateIdValidator();
+    this.updateMaxLoadValidator();
+  }
+
+  onTypeChange(): void {
+    this.updateMaxLoadValidator();
+  }
+
+  private updateMaxLoadValidator(): void {
+    const maxLoadControl = this.nodeForm.get('maxLoad');
+    const typeControl = this.nodeForm.get('type');
+    if (!maxLoadControl || !typeControl) return;
+
+    if (typeControl.value === 'anchor') {
+      maxLoadControl.setValidators([Validators.required, Validators.min(1)]);
+      if (!maxLoadControl.value) {
+        maxLoadControl.setValue(200);
+      }
+    } else {
+      maxLoadControl.clearValidators();
+      maxLoadControl.setValue(null);
+    }
+    maxLoadControl.updateValueAndValidity();
   }
 
   private updateIdValidator(): void {
@@ -199,6 +236,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
       id: formValue.id,
       name: formValue.name,
       type: formValue.type,
+      maxLoad: formValue.type === 'anchor' ? parseFloat(formValue.maxLoad) : undefined,
       description: formValue.description || undefined,
       x: formValue.x,
       y: formValue.y

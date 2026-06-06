@@ -42,6 +42,7 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
   @Output() addSegmentRequest = new EventEmitter<{ sourceId: string; targetId: string }>();
 
   private cy!: Core;
+  private dangerAnimationTimer: any = null;
 
   constructor() {}
 
@@ -58,6 +59,7 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
   }
 
   ngOnDestroy(): void {
+    this.stopDangerAnimation();
     if (this.cy) {
       this.cy.destroy();
     }
@@ -122,11 +124,16 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         style: {
           'background-color': NODE_TYPE_MAP.danger.color,
           'shape': 'triangle',
-          'width': 50,
-          'height': 50,
+          'width': 60,
+          'height': 60,
           'border-color': '#ffeb3b',
-          'border-width': 4,
-          'border-style': 'dashed'
+          'border-width': 5,
+          'border-style': 'double',
+          'color': '#fff',
+          'text-outline-width': 3,
+          'text-outline-color': '#b71c1c',
+          'font-weight': 'bold',
+          'font-size': '11px'
         }
       },
       {
@@ -266,6 +273,8 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
 
     this.cy.elements().remove();
     this.cy.add(elements);
+
+    this.restartDangerAnimation();
   }
 
   private setupEventListeners(): void {
@@ -317,6 +326,51 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
   zoom(level: number): void {
     if (this.cy) {
       this.cy.zoom(level);
+    }
+  }
+
+  private startDangerAnimation(): void {
+    this.stopDangerAnimation();
+    let phase = 0;
+
+    const animate = () => {
+      if (!this.cy) return;
+      phase += 0.08;
+      const pulse = 0.5 + 0.5 * Math.sin(phase);
+      const borderWidth = 3 + pulse * 5;
+      const sizeScale = 1 + pulse * 0.15;
+
+      const dangerNodes = this.cy.nodes('node.danger');
+      if (dangerNodes.length > 0) {
+        dangerNodes.style('border-width', `${borderWidth}px`);
+        dangerNodes.style('width', `${60 * sizeScale}px`);
+        dangerNodes.style('height', `${60 * sizeScale}px`);
+
+        if (pulse > 0.7) {
+          dangerNodes.style('border-color', '#ffeb3b');
+        } else {
+          dangerNodes.style('border-color', '#f44336');
+        }
+      }
+
+      this.dangerAnimationTimer = requestAnimationFrame(animate);
+    };
+
+    this.dangerAnimationTimer = requestAnimationFrame(animate);
+  }
+
+  private stopDangerAnimation(): void {
+    if (this.dangerAnimationTimer) {
+      cancelAnimationFrame(this.dangerAnimationTimer);
+      this.dangerAnimationTimer = null;
+    }
+  }
+
+  private restartDangerAnimation(): void {
+    if (this.nodes.some(n => n.type === 'danger')) {
+      this.startDangerAnimation();
+    } else {
+      this.stopDangerAnimation();
     }
   }
 }

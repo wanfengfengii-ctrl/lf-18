@@ -141,19 +141,48 @@ export class CaveGraphService {
         s => s.sourceId === anchor.id || s.targetId === anchor.id
       );
       const totalLoad = connectedSegments.reduce((sum, s) => sum + s.maxLoad, 0);
-      const maxLoad = connectedSegments.length > 0
-        ? Math.max(...connectedSegments.map(s => s.maxLoad))
-        : 0;
-      const estimatedLoad = totalLoad / 2;
+      const anchorMaxLoad = anchor.maxLoad ?? 0;
       return {
         nodeId: anchor.id,
         nodeName: anchor.name,
-        totalLoad: estimatedLoad,
-        maxLoad: maxLoad,
-        isOverloaded: estimatedLoad > maxLoad && connectedSegments.length > 1,
+        totalLoad: totalLoad,
+        maxLoad: anchorMaxLoad,
+        isOverloaded: anchorMaxLoad > 0 && totalLoad > anchorMaxLoad,
         connectedSegments: connectedSegments.map(s => s.id)
       };
     });
+  }
+
+  checkSegmentOverload(
+    sourceId: string,
+    targetId: string,
+    segmentMaxLoad: number,
+    excludeSegmentId?: string
+  ): { overloadedAnchors: { nodeId: string; nodeName: string; totalLoad: number; maxLoad: number }[] } {
+    const overloadedAnchors: { nodeId: string; nodeName: string; totalLoad: number; maxLoad: number }[] = [];
+    const nodeIdsToCheck = [sourceId, targetId];
+
+    for (const nodeId of nodeIdsToCheck) {
+      const node = this.nodes.find(n => n.id === nodeId);
+      if (!node || node.type !== 'anchor' || !node.maxLoad) continue;
+
+      const connectedSegments = this.segments.filter(
+        s => (s.sourceId === nodeId || s.targetId === nodeId) && s.id !== excludeSegmentId
+      );
+      const existingLoad = connectedSegments.reduce((sum, s) => sum + s.maxLoad, 0);
+      const totalLoad = existingLoad + segmentMaxLoad;
+
+      if (totalLoad > node.maxLoad) {
+        overloadedAnchors.push({
+          nodeId: node.id,
+          nodeName: node.name,
+          totalLoad,
+          maxLoad: node.maxLoad
+        });
+      }
+    }
+
+    return { overloadedAnchors };
   }
 
   findPathsToEntrance(fromNodeId: string): PathResult[] {
@@ -272,13 +301,13 @@ export class CaveGraphService {
 
     const sampleNodes: CaveNode[] = [
       { id: 'entrance-1', name: '主入口', type: 'entrance', x: 400, y: 100, description: '洞穴主入口' },
-      { id: 'anchor-1', name: '入口锚点', type: 'anchor', x: 400, y: 180, description: '入口第一锚点' },
+      { id: 'anchor-1', name: '入口锚点', type: 'anchor', x: 400, y: 180, description: '入口第一锚点', maxLoad: 350 },
       { id: 'platform-1', name: '第一平台', type: 'platform', x: 300, y: 280, description: '下降后第一平台' },
       { id: 'shaft-1', name: '一号竖井', type: 'shaft', x: 500, y: 350, description: '深约25米的竖井' },
-      { id: 'anchor-2', name: '竖井锚点', type: 'anchor', x: 500, y: 280, description: '竖井顶部锚点' },
+      { id: 'anchor-2', name: '竖井锚点', type: 'anchor', x: 500, y: 280, description: '竖井顶部锚点', maxLoad: 500 },
       { id: 'platform-2', name: '地下大厅', type: 'platform', x: 500, y: 500, description: '宽阔的地下大厅' },
       { id: 'danger-1', name: '落石区', type: 'danger', x: 250, y: 400, description: '不稳定岩层区域' },
-      { id: 'anchor-3', name: '分支锚点', type: 'anchor', x: 650, y: 450, description: '分支路线锚点' },
+      { id: 'anchor-3', name: '分支锚点', type: 'anchor', x: 650, y: 450, description: '分支路线锚点', maxLoad: 300 },
       { id: 'platform-3', name: '东侧平台', type: 'platform', x: 750, y: 380, description: '东侧分支平台' }
     ];
 

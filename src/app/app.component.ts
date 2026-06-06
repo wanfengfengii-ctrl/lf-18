@@ -195,6 +195,7 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
                     [nodeOptions]="nodeOptions"
                     [paths]="selectedPaths"
                     [nodeNames]="nodeNames"
+                    [selectedNode]="selectedNodeId"
                     (nodeSelect)="onPathNodeSelect($event)"
                     (pathHighlight)="onPathHighlight($event)"
                   ></app-path-analysis>

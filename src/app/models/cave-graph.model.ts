@@ -70,6 +70,11 @@ export interface RouteVersion {
   teamConfig: TeamConfig;
 }
 
+export interface ChangedSegmentDetail {
+  id: string;
+  changes: string[];
+}
+
 export interface RouteComparison {
   versionA: RouteVersion;
   versionB: RouteVersion;
@@ -78,6 +83,7 @@ export interface RouteComparison {
   addedSegments: string[];
   removedSegments: string[];
   changedSegments: string[];
+  changedSegmentDetails: ChangedSegmentDetail[];
   totalLengthDiff: number;
   riskLevelDiff: string;
 }

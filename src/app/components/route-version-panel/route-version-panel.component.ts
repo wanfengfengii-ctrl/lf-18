@@ -111,7 +111,7 @@ import { RouteVersion, RouteComparison } from '../../models/cave-graph.model';
         <div class="compare-form" *ngIf="versions.length >= 2">
           <mat-form-field appearance="outline" class="half-width">
             <mat-label>版本 A</mat-label>
-            <mat-select formControlName="versionA" [(value)]="selectedVersionA">
+            <mat-select [(value)]="selectedVersionA">
               <mat-option *ngFor="let version of versions" [value]="version.id">
                 {{ version.name }}
               </mat-option>
@@ -119,7 +119,7 @@ import { RouteVersion, RouteComparison } from '../../models/cave-graph.model';
           </mat-form-field>
           <mat-form-field appearance="outline" class="half-width">
             <mat-label>版本 B</mat-label>
-            <mat-select formControlName="versionB" [(value)]="selectedVersionB">
+            <mat-select [(value)]="selectedVersionB">
               <mat-option *ngFor="let version of versions" [value]="version.id">
                 {{ version.name }}
               </mat-option>
@@ -206,6 +206,27 @@ import { RouteVersion, RouteComparison } from '../../models/cave-graph.model';
               <span class="detail-value">
                 {{ comparison.riskLevelDiff }}
               </span>
+            </div>
+          </div>
+
+          <div class="changed-details" *ngIf="comparison.changedSegmentDetails && comparison.changedSegmentDetails.length > 0">
+            <mat-divider></mat-divider>
+            <div class="section-title">
+              <mat-icon>edit</mat-icon>
+              变更的绳段 ({{ comparison.changedSegmentDetails.length }})
+            </div>
+            <div class="changed-segments-list">
+              <div class="changed-segment-item" *ngFor="let detail of comparison.changedSegmentDetails">
+                <div class="changed-segment-id">
+                  <mat-icon>timeline</mat-icon>
+                  {{ getSegmentName(detail.id, comparison.versionB) }}
+                </div>
+                <ul class="change-list">
+                  <li *ngFor="let change of detail.changes" class="change-item">
+                    {{ change }}
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
@@ -420,6 +441,44 @@ import { RouteVersion, RouteComparison } from '../../models/cave-graph.model';
     .detail-value.negative {
       color: #f44336;
     }
+    .changed-details {
+      margin-top: 8px;
+    }
+    .changed-segments-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .changed-segment-item {
+      background: rgba(255, 152, 0, 0.08);
+      border-radius: 6px;
+      padding: 8px 10px;
+      border-left: 3px solid #ff9800;
+    }
+    .changed-segment-id {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(0, 0, 0, 0.87);
+      margin-bottom: 4px;
+    }
+    .changed-segment-id mat-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: #ff9800;
+    }
+    .change-list {
+      margin: 4px 0 0 0;
+      padding-left: 20px;
+    }
+    .change-item {
+      font-size: 12px;
+      color: rgba(0, 0, 0, 0.7);
+      margin-bottom: 2px;
+    }
     ::ng-deep .mat-mdc-card-header {
       padding-bottom: 8px;
     }
@@ -493,5 +552,13 @@ export class RouteVersionPanelComponent implements OnInit {
         versionBId: this.selectedVersionB
       });
     }
+  }
+
+  getSegmentName(segId: string, version: RouteVersion): string {
+    const seg = version.segments.find(s => s.id === segId);
+    if (seg) {
+      return `${seg.length}m 绳段 (${seg.sourceId} - ${seg.targetId})`;
+    }
+    return segId;
   }
 }

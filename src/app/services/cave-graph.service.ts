@@ -224,9 +224,6 @@ export class CaveGraphService {
 
   getDynamicAnchorLoads(): AnchorDynamicLoad[] {
     const team = this.teamConfig;
-    const totalTeamWeight = team.members.reduce(
-      (sum, m) => sum + m.weight + m.equipmentWeight, 0
-    ) * team.safetyFactor;
 
     const anchors = this.nodes.filter(n => n.type === 'anchor' && !n.isBlocked);
     return anchors.map(anchor => {
@@ -234,7 +231,10 @@ export class CaveGraphService {
         s => !s.isBlocked && (s.sourceId === anchor.id || s.targetId === anchor.id)
       );
       const staticLoad = connectedSegments.reduce((sum, s) => sum + s.maxLoad, 0);
-      const dynamicLoad = staticLoad + totalTeamWeight;
+
+      const peakWeight = this.calculatePeakWeightAtAnchor(anchor.id);
+      const dynamicLoad = staticLoad + peakWeight * team.safetyFactor;
+
       const maxLoad = anchor.maxLoad ?? 0;
       const utilization = maxLoad > 0 ? (dynamicLoad / maxLoad) * 100 : 0;
 
@@ -251,6 +251,50 @@ export class CaveGraphService {
     });
   }
 
+  private calculatePeakWeightAtAnchor(anchorId: string): number {
+    const team = this.teamConfig;
+    const connectedSegments = this.segments.filter(
+      s => !s.isBlocked && (s.sourceId === anchorId || s.targetId === anchorId)
+    );
+
+    if (connectedSegments.length === 0 || team.members.length === 0) return 0;
+
+    const concurrentPeople = Math.min(connectedSegments.length + 1, team.members.length);
+
+    const orderedMembers = team.passingOrder
+      .map(id => team.members.find(m => m.id === id))
+      .filter((m): m is TeamMember => m !== undefined);
+
+    if (orderedMembers.length === 0) {
+      const sortedMembers = [...team.members].sort(
+        (a, b) => (b.weight + b.equipmentWeight) - (a.weight + a.equipmentWeight)
+      );
+      let sum = 0;
+      for (let i = 0; i < Math.min(concurrentPeople, sortedMembers.length); i++) {
+        sum += sortedMembers[i].weight + sortedMembers[i].equipmentWeight;
+      }
+      return sum;
+    }
+
+    if (concurrentPeople >= orderedMembers.length) {
+      return orderedMembers.reduce((sum, m) => sum + m.weight + m.equipmentWeight, 0);
+    }
+
+    let maxSum = 0;
+    const circular = [...orderedMembers, ...orderedMembers];
+    for (let i = 0; i < orderedMembers.length; i++) {
+      let windowSum = 0;
+      for (let j = 0; j < concurrentPeople; j++) {
+        windowSum += circular[i + j].weight + circular[i + j].equipmentWeight;
+      }
+      if (windowSum > maxSum) {
+        maxSum = windowSum;
+      }
+    }
+
+    return maxSum;
+  }
+
   private calculatePeakLoadMembers(anchorId: string): string[] {
     const team = this.teamConfig;
     const connectedSegments = this.segments.filter(
@@ -259,16 +303,41 @@ export class CaveGraphService {
 
     if (connectedSegments.length === 0 || team.members.length === 0) return [];
 
-    const peakMembers: string[] = [];
-    const sortedMembers = [...team.members].sort(
-      (a, b) => (b.weight + b.equipmentWeight) - (a.weight + a.equipmentWeight)
-    );
+    const concurrentPeople = Math.min(connectedSegments.length + 1, team.members.length);
 
-    const segmentCount = Math.min(connectedSegments.length, sortedMembers.length);
-    for (let i = 0; i < segmentCount; i++) {
-      peakMembers.push(sortedMembers[i].name);
+    const orderedMembers = team.passingOrder
+      .map(id => team.members.find(m => m.id === id))
+      .filter((m): m is TeamMember => m !== undefined);
+
+    if (orderedMembers.length === 0) {
+      const sortedMembers = [...team.members].sort(
+        (a, b) => (b.weight + b.equipmentWeight) - (a.weight + a.equipmentWeight)
+      );
+      return sortedMembers.slice(0, concurrentPeople).map(m => m.name);
     }
 
+    if (concurrentPeople >= orderedMembers.length) {
+      return orderedMembers.map(m => m.name);
+    }
+
+    let maxSum = 0;
+    let maxStartIdx = 0;
+    const circular = [...orderedMembers, ...orderedMembers];
+    for (let i = 0; i < orderedMembers.length; i++) {
+      let windowSum = 0;
+      for (let j = 0; j < concurrentPeople; j++) {
+        windowSum += circular[i + j].weight + circular[i + j].equipmentWeight;
+      }
+      if (windowSum > maxSum) {
+        maxSum = windowSum;
+        maxStartIdx = i;
+      }
+    }
+
+    const peakMembers: string[] = [];
+    for (let j = 0; j < concurrentPeople; j++) {
+      peakMembers.push(circular[maxStartIdx + j].name);
+    }
     return peakMembers;
   }
 
@@ -700,15 +769,33 @@ export class CaveGraphService {
     const removedSegments = Array.from(segIdsA).filter(id => !segIdsB.has(id));
 
     const changedSegments: string[] = [];
+    const changedSegmentDetails: { id: string; changes: string[] }[] = [];
     for (const segId of segIdsA) {
       if (segIdsB.has(segId)) {
         const segA = versionA.segments.find(s => s.id === segId);
         const segB = versionB.segments.find(s => s.id === segId);
         if (segA && segB) {
-          if (segA.length !== segB.length || segA.riskLevel !== segB.riskLevel ||
-              segA.maxLoad !== segB.maxLoad || segA.sourceId !== segB.sourceId ||
-              segA.targetId !== segB.targetId) {
+          const changes: string[] = [];
+          if (segA.length !== segB.length) changes.push(`长度: ${segA.length}m → ${segB.length}m`);
+          if (segA.riskLevel !== segB.riskLevel) changes.push(`风险: ${segA.riskLevel} → ${segB.riskLevel}`);
+          if (segA.maxLoad !== segB.maxLoad) changes.push(`承载: ${segA.maxLoad} → ${segB.maxLoad}`);
+          if (segA.sourceId !== segB.sourceId || segA.targetId !== segB.targetId) changes.push('连接节点变更');
+          const dirA = segA.traversalDirection || 'bidirectional';
+          const dirB = segB.traversalDirection || 'bidirectional';
+          if (dirA !== dirB) {
+            const dirMap: Record<string, string> = {
+              'bidirectional': '双向',
+              'sourceToTarget': '正向(源→目标)',
+              'targetToSource': '反向(目标→源)'
+            };
+            changes.push(`通行方向: ${dirMap[dirA]} → ${dirMap[dirB]}`);
+          }
+          if (segA.isBlocked !== segB.isBlocked) {
+            changes.push(segB.isBlocked ? '状态: 已封锁' : '状态: 已解除封锁');
+          }
+          if (changes.length > 0) {
             changedSegments.push(segId);
+            changedSegmentDetails.push({ id: segId, changes });
           }
         }
       }
@@ -725,6 +812,7 @@ export class CaveGraphService {
       addedSegments,
       removedSegments,
       changedSegments,
+      changedSegmentDetails,
       totalLengthDiff: totalLengthB - totalLengthA,
       riskLevelDiff: this.compareRiskLevels(versionA.segments, versionB.segments)
     };

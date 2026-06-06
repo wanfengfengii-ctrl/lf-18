@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatListModule } from '@angular/material/list';
@@ -232,10 +232,11 @@ import { PathResult, RISK_LEVEL_MAP } from '../../models/cave-graph.model';
     }
   `]
 })
-export class PathAnalysisComponent {
+export class PathAnalysisComponent implements OnChanges {
   @Input() nodeOptions: { id: string; name: string }[] = [];
   @Input() paths: PathResult[] = [];
   @Input() nodeNames: Record<string, string> = {};
+  @Input() selectedNode: string | null = null;
 
   @Output() nodeSelect = new EventEmitter<string>();
   @Output() pathHighlight = new EventEmitter<{ nodes: string[]; segments: string[] }>();
@@ -243,6 +244,16 @@ export class PathAnalysisComponent {
   selectedNodeId = new FormControl('');
   sortMode = new FormControl('length');
   selectedPathIndex: number | null = null;
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['selectedNode'] && this.selectedNode) {
+      this.selectedNodeId.setValue(this.selectedNode, { emitEvent: false });
+    }
+    if (changes['paths']) {
+      this.selectedPathIndex = null;
+      this.pathHighlight.emit({ nodes: [], segments: [] });
+    }
+  }
 
   get sortedPaths(): PathResult[] {
     const paths = [...this.paths];

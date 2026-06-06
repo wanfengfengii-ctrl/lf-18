@@ -1,14 +1,24 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatTabsModule } from '@angular/material/tabs';
-import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatDividerModule } from '@angular/material/divider';
-import { CaveGraphService } from './services/cave-graph.service';
+import { Subscription } from 'rxjs';
+
+import { NotificationService } from './core/notification.service';
+import { GraphStateService } from './core/state/graph-state.service';
+import { PathAnalysisService } from './modules/path-analysis/path-analysis.service';
+import { GraphAnalysisService } from './modules/path-analysis/graph-analysis.service';
+import { SupplyService } from './modules/supply/supply.service';
+import { CommService } from './modules/comm/comm.service';
+import { SimulationService } from './modules/simulation/simulation.service';
+import { VersionService } from './modules/version/version.service';
+import { GraphEditorService } from './modules/graph-editor/graph-editor.service';
+
 import {
   CaveNode,
   RopeSegment,
@@ -25,8 +35,12 @@ import {
   SupplyItem,
   SupplyPlacementRecommendation,
   EmergencySupplyRoute,
-  SupplyConsumptionRate
-} from './models/cave-graph.model';
+  SupplyConsumptionRate,
+  CommDevice,
+  CommAnalysis,
+  CommDeviceType
+} from './shared/models';
+
 import { CytoscapeGraphComponent } from './components/cytoscape-graph/cytoscape-graph.component';
 import { NodeEditorComponent } from './components/node-editor/node-editor.component';
 import { SegmentEditorComponent } from './components/segment-editor/segment-editor.component';
@@ -39,11 +53,6 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
 import { SupplyPanelComponent } from './components/supply-panel/supply-panel.component';
 import { SupplyEditorComponent } from './components/supply-editor/supply-editor.component';
 import { CommPanelComponent } from './components/comm-panel/comm-panel.component';
-import {
-  CommDevice,
-  CommAnalysis,
-  CommDeviceType
-} from './models/cave-graph.model';
 
 @Component({
   selector: 'app-root',
@@ -55,7 +64,6 @@ import {
     MatIconModule,
     MatSidenavModule,
     MatTabsModule,
-    MatSnackBarModule,
     MatDialogModule,
     MatDividerModule,
     CytoscapeGraphComponent,
@@ -516,7 +524,7 @@ import {
     }
   `]
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, OnDestroy {
   @ViewChild(CytoscapeGraphComponent) graphComponent!: CytoscapeGraphComponent;
 
   nodes: CaveNode[] = [];
@@ -556,6 +564,8 @@ export class AppComponent implements OnInit {
   commDevices: CommDevice[] = [];
   commAnalysis: CommAnalysis | null = null;
 
+  private subscriptions = new Subscription();
+
   get selectedSupplyNode(): CaveNode | null {
     if (!this.selectedSupplyNodeId) return null;
     return this.nodes.find(n => n.id === this.selectedSupplyNodeId) || null;
@@ -575,44 +585,85 @@ export class AppComponent implements OnInit {
   ];
 
   constructor(
-    private caveGraphService: CaveGraphService,
-    private snackBar: MatSnackBar,
+    private graphState: GraphStateService,
+    private pathAnalysis: PathAnalysisService,
+    private graphAnalysisService: GraphAnalysisService,
+    private supplyService: SupplyService,
+    private commService: CommService,
+    private simulationService: SimulationService,
+    private versionService: VersionService,
+    private graphEditor: GraphEditorService,
+    private notification: NotificationService,
     private dialog: MatDialog
   ) {}
 
   ngOnInit(): void {
-    this.caveGraphService.getNodes().subscribe(nodes => {
-      this.nodes = nodes;
-    });
+    this.subscriptions.add(
+      this.graphState.getNodes().subscribe(nodes => {
+        this.nodes = nodes;
+      })
+    );
 
-    this.caveGraphService.getSegments().subscribe(segments => {
-      this.segments = segments;
-    });
+    this.subscriptions.add(
+      this.graphState.getSegments().subscribe(segments => {
+        this.segments = segments;
+      })
+    );
 
-    this.caveGraphService.getAnalysis().subscribe(analysis => {
-      this.analysis = analysis;
-      this.disconnectedNodes = analysis.disconnectedNodes;
-      this.overloadAnchors = analysis.overloadedAnchors.map(a => a.nodeId);
-      this.highlights = analysis.highlights || null;
-      this.supplyAnalysis = analysis.supplyAnalysis || null;
-      this.commAnalysis = analysis.commAnalysis || null;
-    });
+    this.subscriptions.add(
+      this.graphAnalysisService.getAnalysis().subscribe(analysis => {
+        this.analysis = analysis;
+        this.disconnectedNodes = analysis.disconnectedNodes;
+        this.overloadAnchors = analysis.overloadedAnchors.map(a => a.nodeId);
+        this.highlights = analysis.highlights || null;
+        this.supplyAnalysis = analysis.supplyAnalysis || null;
+        this.commAnalysis = analysis.commAnalysis || null;
+      })
+    );
 
-    this.caveGraphService.getCommDevices().subscribe(devices => {
-      this.commDevices = devices;
-    });
+    this.subscriptions.add(
+      this.commService.getCommDevices().subscribe(devices => {
+        this.commDevices = devices;
+      })
+    );
 
-    this.caveGraphService.getTeamConfig().subscribe(config => {
-      this.teamConfig = config;
-    });
+    this.subscriptions.add(
+      this.graphEditor.getTeamConfig().subscribe(config => {
+        this.teamConfig = config;
+        this.pathAnalysis.setTeamConfig(config);
+      })
+    );
 
-    this.caveGraphService.getRouteVersions().subscribe(versions => {
-      this.routeVersions = versions;
-    });
+    this.subscriptions.add(
+      this.versionService.getRouteVersions().subscribe(versions => {
+        this.routeVersions = versions;
+      })
+    );
 
-    this.caveGraphService.getSimulationMode().subscribe(mode => {
-      this.isSimulationMode = mode;
-    });
+    this.subscriptions.add(
+      this.simulationService.getSimulationMode().subscribe(mode => {
+        this.isSimulationMode = mode;
+        this.pathAnalysis.setSimulationMode(mode);
+      })
+    );
+
+    this.subscriptions.add(
+      this.simulationService.getSimulatedRemovedNodes().subscribe(nodes => {
+        this.simulatedRemovedNodes = nodes;
+        this.pathAnalysis.setSimulatedRemovedNodes(nodes);
+      })
+    );
+
+    this.subscriptions.add(
+      this.simulationService.getSimulatedRemovedSegments().subscribe(segments => {
+        this.simulatedRemovedSegments = segments;
+        this.pathAnalysis.setSimulatedRemovedSegments(segments);
+      })
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.subscriptions.unsubscribe();
   }
 
   get blockedNodes(): string[] {
@@ -658,7 +709,7 @@ export class AppComponent implements OnInit {
     this.selectedSegmentId = null;
     this.showNodeForm = false;
     this.showSegmentForm = false;
-    this.selectedPaths = this.caveGraphService.findPathsToEntrance(nodeId);
+    this.selectedPaths = this.pathAnalysis.findPathsToEntrance(nodeId);
     this.highlightPathNodes = [];
     this.highlightPathSegments = [];
   }
@@ -682,12 +733,10 @@ export class AppComponent implements OnInit {
     this.selectedNodeId = null;
     this.selectedSegmentId = null;
     this.selectedSupplyNodeId = null;
-    if (!this.showNodeForm && !this.showSegmentForm) {
-    }
   }
 
   onNodeDragEnd(event: { id: string; x: number; y: number }): void {
-    this.caveGraphService.updateNode(event.id, { x: event.x, y: event.y });
+    this.graphState.updateNode(event.id, { x: event.x, y: event.y });
   }
 
   onAddNode(): void {
@@ -703,7 +752,7 @@ export class AppComponent implements OnInit {
 
   onAddSegment(): void {
     if (this.nodes.length < 2) {
-      this.showSnackBar('至少需要两个节点才能添加绳段');
+      this.notification.warning('至少需要两个节点才能添加绳段');
       return;
     }
     this.showSegmentForm = true;
@@ -715,39 +764,39 @@ export class AppComponent implements OnInit {
   onSaveNode(node: CaveNode): void {
     try {
       if (this.selectedNodeId) {
-        this.caveGraphService.updateNode(node.id, {
+        this.graphState.updateNode(node.id, {
           name: node.name,
           type: node.type,
           description: node.description,
           maxLoad: node.maxLoad,
           isBlocked: node.isBlocked
         });
-        this.showSnackBar('节点已更新');
+        this.notification.success('节点已更新');
       } else {
-        this.caveGraphService.addNode(node);
+        this.graphState.addNode(node);
         this.selectedNodeId = node.id;
         this.showNodeForm = false;
-        this.showSnackBar('节点已添加');
+        this.notification.success('节点已添加');
       }
     } catch (e: any) {
-      this.showSnackBar(e.message || '操作失败');
+      this.notification.error(e.message || '操作失败');
     }
   }
 
   onDeleteNode(nodeId: string): void {
     if (confirm('确定要删除此节点吗？相关联的绳段也将被删除。')) {
-      this.caveGraphService.deleteNode(nodeId);
+      this.graphState.deleteNode(nodeId);
       this.selectedNodeId = null;
       if (this.selectedSupplyNodeId === nodeId) {
         this.selectedSupplyNodeId = null;
       }
-      this.showSnackBar('节点已删除');
+      this.notification.success('节点已删除');
     }
   }
 
   onSaveSegment(segment: RopeSegment): void {
     try {
-      const overloadCheck = this.caveGraphService.checkSegmentOverload(
+      const overloadCheck = this.pathAnalysis.checkSegmentOverload(
         segment.sourceId,
         segment.targetId,
         segment.maxLoad,
@@ -772,14 +821,14 @@ export class AppComponent implements OnInit {
         this.doSaveSegment(segment);
       }
     } catch (e: any) {
-      this.showSnackBar(e.message || '操作失败');
+      this.notification.error(e.message || '操作失败');
     }
   }
 
   private doSaveSegment(segment: RopeSegment): void {
     try {
       if (this.selectedSegmentId) {
-        this.caveGraphService.updateSegment(segment.id, {
+        this.graphState.updateSegment(segment.id, {
           sourceId: segment.sourceId,
           targetId: segment.targetId,
           length: segment.length,
@@ -790,23 +839,23 @@ export class AppComponent implements OnInit {
           isBlocked: segment.isBlocked,
           description: segment.description
         });
-        this.showSnackBar('绳段已更新');
+        this.notification.success('绳段已更新');
       } else {
-        const newSeg = this.caveGraphService.addSegment(segment);
+        const newSeg = this.graphState.addSegment(segment);
         this.selectedSegmentId = newSeg.id;
         this.showSegmentForm = false;
-        this.showSnackBar('绳段已添加');
+        this.notification.success('绳段已添加');
       }
     } catch (e: any) {
-      this.showSnackBar(e.message || '操作失败');
+      this.notification.error(e.message || '操作失败');
     }
   }
 
   onDeleteSegment(segmentId: string): void {
     if (confirm('确定要删除此绳段吗？')) {
-      this.caveGraphService.deleteSegment(segmentId);
+      this.graphState.deleteSegment(segmentId);
       this.selectedSegmentId = null;
-      this.showSnackBar('绳段已删除');
+      this.notification.success('绳段已删除');
     }
   }
 
@@ -818,7 +867,7 @@ export class AppComponent implements OnInit {
   }
 
   onPathNodeSelect(nodeId: string): void {
-    this.selectedPaths = this.caveGraphService.findPathsToEntrance(nodeId);
+    this.selectedPaths = this.pathAnalysis.findPathsToEntrance(nodeId);
     this.selectedNodeId = nodeId;
     this.selectedSegmentId = null;
     this.highlightPathNodes = [];
@@ -831,19 +880,17 @@ export class AppComponent implements OnInit {
   }
 
   onTeamConfigChange(config: TeamConfig): void {
-    this.caveGraphService.setTeamConfig(config);
+    this.graphEditor.setTeamConfig(config);
   }
 
   onToggleSimulation(): void {
     if (this.isSimulationMode) {
-      this.caveGraphService.exitSimulationMode();
+      this.simulationService.exitSimulationMode();
       this.simulationResult = null;
-      this.simulatedRemovedNodes = [];
-      this.simulatedRemovedSegments = [];
-      this.showSnackBar('已退出演练模式');
+      this.notification.success('已退出演练模式');
     } else {
-      this.caveGraphService.enterSimulationMode();
-      this.showSnackBar('已进入演练模式');
+      this.simulationService.enterSimulationMode();
+      this.notification.success('已进入演练模式');
     }
   }
 
@@ -853,63 +900,61 @@ export class AppComponent implements OnInit {
 
   onSimNodeToggle(nodeId: string): void {
     if (this.simulatedRemovedNodes.includes(nodeId)) {
-      this.caveGraphService.simulateRestoreNode(nodeId);
+      this.simulationService.simulateRestoreNode(nodeId);
     } else {
-      this.caveGraphService.simulateRemoveNode(nodeId);
+      this.simulationService.simulateRemoveNode(nodeId);
     }
-    this.simulatedRemovedNodes = this.caveGraphService.simulatedRemovedNodes;
   }
 
   onSimSegmentToggle(segmentId: string): void {
     if (this.simulatedRemovedSegments.includes(segmentId)) {
-      this.caveGraphService.simulateRestoreSegment(segmentId);
+      this.simulationService.simulateRestoreSegment(segmentId);
     } else {
-      this.caveGraphService.simulateRemoveSegment(segmentId);
+      this.simulationService.simulateRemoveSegment(segmentId);
     }
-    this.simulatedRemovedSegments = this.caveGraphService.simulatedRemovedSegments;
   }
 
   onRunSimulation(): void {
-    this.simulationResult = this.caveGraphService.runSimulation();
-    this.showSnackBar('模拟分析完成');
+    this.simulationResult = this.simulationService.runSimulation();
+    this.notification.success('模拟分析完成');
   }
 
   onSaveVersion(data: { name: string; description?: string }): void {
-    this.caveGraphService.saveRouteVersion(data.name, data.description);
-    this.showSnackBar('版本已保存');
+    this.versionService.saveRouteVersion(data.name, data.description);
+    this.notification.success('版本已保存');
   }
 
   onLoadVersion(versionId: string): void {
     if (confirm('确定要加载此版本吗？当前未保存的更改将丢失。')) {
-      this.caveGraphService.loadRouteVersion(versionId);
-      this.showSnackBar('版本已加载');
+      this.versionService.loadRouteVersion(versionId);
+      this.notification.success('版本已加载');
     }
   }
 
   onDeleteVersion(versionId: string): void {
     if (confirm('确定要删除此版本吗？')) {
-      this.caveGraphService.deleteRouteVersion(versionId);
+      this.versionService.deleteRouteVersion(versionId);
       this.routeComparison = null;
-      this.showSnackBar('版本已删除');
+      this.notification.success('版本已删除');
     }
   }
 
   onCompareVersions(data: { versionAId: string; versionBId: string }): void {
-    this.routeComparison = this.caveGraphService.compareRouteVersions(
+    this.routeComparison = this.versionService.compareRouteVersions(
       data.versionAId,
       data.versionBId
     );
   }
 
   onLoadSample(): void {
-    this.caveGraphService.loadSampleData();
+    this.graphEditor.loadSampleData();
     this.selectedNodeId = null;
     this.selectedSegmentId = null;
     this.showNodeForm = false;
     this.showSegmentForm = false;
     this.routeComparison = null;
     this.simulationResult = null;
-    this.showSnackBar('示例数据已加载');
+    this.notification.success('示例数据已加载');
     setTimeout(() => {
       if (this.graphComponent) {
         this.graphComponent.fit();
@@ -919,7 +964,7 @@ export class AppComponent implements OnInit {
 
   onClearAll(): void {
     if (confirm('确定要清空所有数据吗？此操作不可恢复。')) {
-      this.caveGraphService.clearAll();
+      this.graphEditor.clearAll();
       this.selectedNodeId = null;
       this.selectedSegmentId = null;
       this.selectedSupplyNodeId = null;
@@ -930,7 +975,7 @@ export class AppComponent implements OnInit {
       this.highlightPathSegments = [];
       this.emergencyRouteNodes = [];
       this.emergencyRouteSegments = [];
-      this.showSnackBar('所有数据已清空');
+      this.notification.success('所有数据已清空');
     }
   }
 
@@ -949,7 +994,7 @@ export class AppComponent implements OnInit {
   onEmergencyRouteClick(route: EmergencySupplyRoute): void {
     this.emergencyRouteNodes = route.path;
     this.emergencyRouteSegments = route.segments;
-    this.showSnackBar(`应急补给路线: ${this.getNodeName(route.fromNodeId)} → ${this.getNodeName(route.toSupplyNodeId)}`);
+    this.notification.info(`应急补给路线: ${this.getNodeName(route.fromNodeId)} → ${this.getNodeName(route.toSupplyNodeId)}`);
   }
 
   onAddSupplyPoint(rec: SupplyPlacementRecommendation): void {
@@ -958,7 +1003,7 @@ export class AppComponent implements OnInit {
 
     if (node.type === 'supply') {
       this.selectedSupplyNodeId = rec.nodeId;
-      this.showSnackBar('该节点已是补给站');
+      this.notification.info('该节点已是补给站');
       return;
     }
 
@@ -974,27 +1019,27 @@ export class AppComponent implements OnInit {
         };
       });
 
-      this.caveGraphService.updateNode(rec.nodeId, {
+      this.graphState.updateNode(rec.nodeId, {
         type: 'supply',
         supplies
       });
       this.selectedSupplyNodeId = rec.nodeId;
-      this.showSnackBar('已设为补给站并添加推荐物资');
+      this.notification.success('已设为补给站并添加推荐物资');
     }
   }
 
   onConsumptionRatesChange(rates: SupplyConsumptionRate[]): void {
-    this.caveGraphService.setConsumptionRates(rates);
+    this.supplyService.setConsumptionRates(rates);
   }
 
   onDurationChange(hours: number): void {
-    this.caveGraphService.setEstimatedDurationHours(hours);
+    this.supplyService.setEstimatedDurationHours(hours);
   }
 
   onSupplySave(supplies: SupplyItem[]): void {
     if (!this.selectedSupplyNodeId) return;
-    this.caveGraphService.updateNodeSupplies(this.selectedSupplyNodeId, supplies);
-    this.showSnackBar('物资库存已更新');
+    this.supplyService.updateNodeSupplies(this.selectedSupplyNodeId, supplies);
+    this.notification.success('物资库存已更新');
   }
 
   onCommDeviceClick(device: CommDevice): void {
@@ -1018,21 +1063,21 @@ export class AppComponent implements OnInit {
       signalStrength: 100,
       isOnline: true
     };
-    this.caveGraphService.addCommDevice(newDevice);
-    this.showSnackBar('通信设备已部署');
+    this.commService.addCommDevice(newDevice);
+    this.notification.success('通信设备已部署');
   }
 
   onToggleCommDevice(deviceId: string): void {
-    this.caveGraphService.toggleCommDeviceOnline(deviceId);
+    this.commService.toggleCommDeviceOnline(deviceId);
     const device = this.commDevices.find(d => d.id === deviceId);
     if (device) {
-      this.showSnackBar(device.isOnline ? '设备已下线' : '设备已上线');
+      this.notification.info(device.isOnline ? '设备已下线' : '设备已上线');
     }
   }
 
   onDeleteCommDevice(deviceId: string): void {
-    this.caveGraphService.deleteCommDevice(deviceId);
-    this.showSnackBar('通信设备已删除');
+    this.commService.deleteCommDevice(deviceId);
+    this.notification.success('通信设备已删除');
   }
 
   onAddCommRelayRecommendation(recommendation: any): void {
@@ -1049,8 +1094,8 @@ export class AppComponent implements OnInit {
       maxConnections: 10,
       supportedChannels: 8
     };
-    this.caveGraphService.addCommDevice(newDevice);
-    this.showSnackBar('中继台已部署');
+    this.commService.addCommDevice(newDevice);
+    this.notification.success('中继台已部署');
   }
 
   onCommDistressRouteClick(info: any): void {
@@ -1061,13 +1106,5 @@ export class AppComponent implements OnInit {
   private getNodeName(nodeId: string): string {
     const node = this.nodes.find(n => n.id === nodeId);
     return node?.name || nodeId;
-  }
-
-  private showSnackBar(message: string): void {
-    this.snackBar.open(message, '关闭', {
-      duration: 3000,
-      horizontalPosition: 'center',
-      verticalPosition: 'bottom'
-    });
   }
 }

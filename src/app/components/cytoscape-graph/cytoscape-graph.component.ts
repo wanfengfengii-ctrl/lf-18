@@ -40,6 +40,7 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
   @Input() simulatedRemovedNodes: string[] = [];
   @Input() simulatedRemovedSegments: string[] = [];
   @Input() isSimulationMode: boolean = false;
+  @Input() commDevices: { nodeId: string; type: string; isOnline: boolean }[] = [];
 
   @Output() nodeClick = new EventEmitter<string>();
   @Output() nodeDblClick = new EventEmitter<string>();
@@ -368,6 +369,92 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         }
       },
       {
+        selector: 'node.comm-relay',
+        style: {
+          'border-color': '#2196F3',
+          'border-width': 5,
+          'border-style': 'double',
+          'shadow-color': '#2196F3',
+          'shadow-blur': 12,
+          'shadow-opacity': 0.7
+        }
+      },
+      {
+        selector: 'node.comm-beacon',
+        style: {
+          'border-color': '#9C27B0',
+          'border-width': 4,
+          'border-style': 'solid',
+          'shadow-color': '#9C27B0',
+          'shadow-blur': 10,
+          'shadow-opacity': 0.6
+        }
+      },
+      {
+        selector: 'node.comm-distress',
+        style: {
+          'border-color': '#F44336',
+          'border-width': 5,
+          'border-style': 'double',
+          'shadow-color': '#F44336',
+          'shadow-blur': 15,
+          'shadow-opacity': 0.8
+        }
+      },
+      {
+        selector: 'node.comm-blind-spot',
+        style: {
+          'border-color': '#f44336',
+          'border-width': 4,
+          'border-style': 'dashed',
+          'background-color': '#ffebee'
+        }
+      },
+      {
+        selector: 'node.comm-recommended-relay',
+        style: {
+          'border-color': '#2196F3',
+          'border-width': 4,
+          'border-style': 'dashed',
+          'shadow-color': '#2196F3',
+          'shadow-blur': 8,
+          'shadow-opacity': 0.5
+        }
+      },
+      {
+        selector: 'node.comm-offline',
+        style: {
+          'opacity': 0.5,
+          'border-color': '#9e9e9e',
+          'border-style': 'dashed'
+        }
+      },
+      {
+        selector: 'edge.weak-signal',
+        style: {
+          'width': 4,
+          'line-color': '#ff9800',
+          'target-arrow-color': '#ff9800',
+          'line-style': 'dashed',
+          'shadow-color': '#ff9800',
+          'shadow-blur': 6,
+          'shadow-opacity': 0.5
+        }
+      },
+      {
+        selector: 'edge.comm-distress-route',
+        style: {
+          'width': 5,
+          'line-color': '#f44336',
+          'target-arrow-color': '#f44336',
+          'line-style': 'dashed',
+          'shadow-color': '#f44336',
+          'shadow-blur': 10,
+          'shadow-opacity': 0.6,
+          'z-index': 4
+        }
+      },
+      {
         selector: 'edge.directional',
         style: {
           'target-arrow-shape': 'triangle',
@@ -432,6 +519,25 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
         classes.push('recommended-supply');
       }
 
+      if (this.highlights?.commRelayNodes?.includes(node.id)) {
+        classes.push('comm-relay');
+      }
+      if (this.highlights?.commBeaconNodes?.includes(node.id)) {
+        classes.push('comm-beacon');
+      }
+      if (this.highlights?.commDistressNodes?.includes(node.id)) {
+        classes.push('comm-distress');
+      }
+      if (this.highlights?.commBlindSpotNodes?.includes(node.id)) {
+        classes.push('comm-blind-spot');
+      }
+      if (this.highlights?.commRecommendedRelayNodes?.includes(node.id)) {
+        classes.push('comm-recommended-relay');
+      }
+      if (this.highlights?.commOfflineNodes?.includes(node.id)) {
+        classes.push('comm-offline');
+      }
+
       elements.push({
         group: 'nodes',
         data: {
@@ -467,6 +573,17 @@ export class CytoscapeGraphComponent implements AfterViewInit, OnChanges, OnDest
       );
       if (isEmergencyRoute) {
         classes.push('emergency-supply');
+      }
+
+      if (this.highlights?.commWeakSignalSegments?.includes(segment.id)) {
+        classes.push('weak-signal');
+      }
+
+      const isCommDistressRoute = this.highlights?.commDistressRoutes?.some(
+        route => route.segments.includes(segment.id)
+      );
+      if (isCommDistressRoute) {
+        classes.push('comm-distress-route');
       }
 
       if (segment.traversalDirection === 'sourceToTarget') {

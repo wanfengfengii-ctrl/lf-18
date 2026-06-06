@@ -38,6 +38,12 @@ import { RouteVersionPanelComponent } from './components/route-version-panel/rou
 import { OverloadConfirmDialogComponent } from './components/overload-confirm-dialog/overload-confirm-dialog.component';
 import { SupplyPanelComponent } from './components/supply-panel/supply-panel.component';
 import { SupplyEditorComponent } from './components/supply-editor/supply-editor.component';
+import { CommPanelComponent } from './components/comm-panel/comm-panel.component';
+import {
+  CommDevice,
+  CommAnalysis,
+  CommDeviceType
+} from './models/cave-graph.model';
 
 @Component({
   selector: 'app-root',
@@ -61,7 +67,8 @@ import { SupplyEditorComponent } from './components/supply-editor/supply-editor.
     SimulationPanelComponent,
     RouteVersionPanelComponent,
     SupplyPanelComponent,
-    SupplyEditorComponent
+    SupplyEditorComponent,
+    CommPanelComponent
   ],
   template: `
     <div class="app-container">
@@ -149,6 +156,29 @@ import { SupplyEditorComponent } from './components/supply-editor/supply-editor.
               <div class="legend-item">
                 <span class="legend-shape emergency-route"></span>
                 <span class="legend-label">应急路线</span>
+              </div>
+            </div>
+            <div class="legend-divider"></div>
+            <div class="legend-items">
+              <div class="legend-item">
+                <span class="legend-shape comm-relay"></span>
+                <span class="legend-label">中继台</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape comm-beacon"></span>
+                <span class="legend-label">定位信标</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape comm-distress"></span>
+                <span class="legend-label">求救点</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape comm-blind-spot"></span>
+                <span class="legend-label">通信盲区</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape weak-signal"></span>
+                <span class="legend-label">弱信号路线</span>
               </div>
             </div>
           </div>
@@ -253,6 +283,23 @@ import { SupplyEditorComponent } from './components/supply-editor/supply-editor.
                       (save)="onSupplySave($event)"
                     ></app-supply-editor>
                   </div>
+                </div>
+              </mat-tab>
+              <mat-tab label="通信">
+                <div class="tab-content">
+                  <app-comm-panel
+                    [commAnalysis]="commAnalysis"
+                    [nodeNames]="nodeNames"
+                    [devices]="commDevices"
+                    [deployableNodes]="deployableNodes"
+                    (deviceClick)="onCommDeviceClick($event)"
+                    (nodeClick)="onCommNodeClick($event)"
+                    (addDevice)="onAddCommDevice($event)"
+                    (toggleDevice)="onToggleCommDevice($event)"
+                    (deleteDevice)="onDeleteCommDevice($event)"
+                    (addRelayRecommendation)="onAddCommRelayRecommendation($event)"
+                    (distressRouteClick)="onCommDistressRouteClick($event)"
+                  ></app-comm-panel>
                 </div>
               </mat-tab>
               <mat-tab label="演练">
@@ -381,6 +428,34 @@ import { SupplyEditorComponent } from './components/supply-editor/supply-editor.
       margin-top: 8px;
       border-radius: 0;
     }
+    .legend-shape.comm-relay {
+      background: #fff;
+      border: 3px double #2196F3;
+      border-radius: 50%;
+    }
+    .legend-shape.comm-beacon {
+      background: #fff;
+      border: 3px solid #9C27B0;
+      border-radius: 50%;
+    }
+    .legend-shape.comm-distress {
+      background: #fff;
+      border: 3px double #F44336;
+      border-radius: 50%;
+    }
+    .legend-shape.comm-blind-spot {
+      background: #ffebee;
+      border: 2px dashed #f44336;
+      border-radius: 50%;
+    }
+    .legend-shape.weak-signal {
+      background: transparent;
+      border: 2px dashed #ff9800;
+      width: 20px;
+      height: 0;
+      margin-top: 8px;
+      border-radius: 0;
+    }
     .legend-divider {
       height: 1px;
       background: rgba(0,0,0,0.1);
@@ -478,6 +553,9 @@ export class AppComponent implements OnInit {
   emergencyRouteNodes: string[] = [];
   emergencyRouteSegments: string[] = [];
 
+  commDevices: CommDevice[] = [];
+  commAnalysis: CommAnalysis | null = null;
+
   get selectedSupplyNode(): CaveNode | null {
     if (!this.selectedSupplyNodeId) return null;
     return this.nodes.find(n => n.id === this.selectedSupplyNodeId) || null;
@@ -517,6 +595,11 @@ export class AppComponent implements OnInit {
       this.overloadAnchors = analysis.overloadedAnchors.map(a => a.nodeId);
       this.highlights = analysis.highlights || null;
       this.supplyAnalysis = analysis.supplyAnalysis || null;
+      this.commAnalysis = analysis.commAnalysis || null;
+    });
+
+    this.caveGraphService.getCommDevices().subscribe(devices => {
+      this.commDevices = devices;
     });
 
     this.caveGraphService.getTeamConfig().subscribe(config => {
@@ -560,6 +643,10 @@ export class AppComponent implements OnInit {
       result[node.id] = node.name;
     }
     return result;
+  }
+
+  get deployableNodes(): { id: string; name: string }[] {
+    return this.nodes.filter(n => !n.isBlocked).map(n => ({ id: n.id, name: n.name }));
   }
 
   get nodeOptions(): { id: string; name: string }[] {
@@ -908,6 +995,67 @@ export class AppComponent implements OnInit {
     if (!this.selectedSupplyNodeId) return;
     this.caveGraphService.updateNodeSupplies(this.selectedSupplyNodeId, supplies);
     this.showSnackBar('物资库存已更新');
+  }
+
+  onCommDeviceClick(device: CommDevice): void {
+    this.selectedNodeId = device.nodeId;
+    this.selectedSegmentId = null;
+  }
+
+  onCommNodeClick(nodeId: string): void {
+    this.selectedNodeId = nodeId;
+    this.selectedSegmentId = null;
+  }
+
+  onAddCommDevice(device: { type: CommDeviceType; nodeId: string }): void {
+    const newDevice = {
+      type: device.type,
+      nodeId: device.nodeId,
+      name: '',
+      coverageRadius: 200,
+      batteryLevel: 100,
+      batteryCapacity: 100,
+      signalStrength: 100,
+      isOnline: true
+    };
+    this.caveGraphService.addCommDevice(newDevice);
+    this.showSnackBar('通信设备已部署');
+  }
+
+  onToggleCommDevice(deviceId: string): void {
+    this.caveGraphService.toggleCommDeviceOnline(deviceId);
+    const device = this.commDevices.find(d => d.id === deviceId);
+    if (device) {
+      this.showSnackBar(device.isOnline ? '设备已下线' : '设备已上线');
+    }
+  }
+
+  onDeleteCommDevice(deviceId: string): void {
+    this.caveGraphService.deleteCommDevice(deviceId);
+    this.showSnackBar('通信设备已删除');
+  }
+
+  onAddCommRelayRecommendation(recommendation: any): void {
+    const nodeId = recommendation.nodeId || recommendation.id;
+    const newDevice = {
+      type: 'relay' as CommDeviceType,
+      nodeId: nodeId,
+      name: '',
+      coverageRadius: 250,
+      batteryLevel: 100,
+      batteryCapacity: 100,
+      signalStrength: 100,
+      isOnline: true,
+      maxConnections: 10,
+      supportedChannels: 8
+    };
+    this.caveGraphService.addCommDevice(newDevice);
+    this.showSnackBar('中继台已部署');
+  }
+
+  onCommDistressRouteClick(info: any): void {
+    this.highlightPathNodes = info.pathToDistress || [];
+    this.highlightPathSegments = info.pathSegments || [];
   }
 
   private getNodeName(nodeId: string): string {

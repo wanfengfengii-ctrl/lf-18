@@ -8,12 +8,26 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { CaveGraphService } from './services/cave-graph.service';
-import { CaveNode, RopeSegment, GraphAnalysis, PathResult, NODE_TYPE_MAP } from './models/cave-graph.model';
+import {
+  CaveNode,
+  RopeSegment,
+  GraphAnalysis,
+  PathResult,
+  NODE_TYPE_MAP,
+  TeamConfig,
+  RouteVersion,
+  RouteComparison,
+  SimulationResult,
+  GraphHighlight
+} from './models/cave-graph.model';
 import { CytoscapeGraphComponent } from './components/cytoscape-graph/cytoscape-graph.component';
 import { NodeEditorComponent } from './components/node-editor/node-editor.component';
 import { SegmentEditorComponent } from './components/segment-editor/segment-editor.component';
 import { StatsPanelComponent } from './components/stats-panel/stats-panel.component';
 import { PathAnalysisComponent } from './components/path-analysis/path-analysis.component';
+import { TeamConfigComponent } from './components/team-config/team-config.component';
+import { SimulationPanelComponent } from './components/simulation-panel/simulation-panel.component';
+import { RouteVersionPanelComponent } from './components/route-version-panel/route-version-panel.component';
 import { OverloadConfirmDialogComponent } from './components/overload-confirm-dialog/overload-confirm-dialog.component';
 
 @Component({
@@ -32,7 +46,10 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
     NodeEditorComponent,
     SegmentEditorComponent,
     StatsPanelComponent,
-    PathAnalysisComponent
+    PathAnalysisComponent,
+    TeamConfigComponent,
+    SimulationPanelComponent,
+    RouteVersionPanelComponent
   ],
   template: `
     <div class="app-container">
@@ -52,6 +69,11 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
         <button mat-icon-button (click)="onClearAll()" title="清空所有" color="warn">
           <mat-icon>delete_sweep</mat-icon>
         </button>
+        <button mat-icon-button (click)="onToggleSimulation()"
+                [color]="isSimulationMode ? 'warn' : ''"
+                [title]="isSimulationMode ? '退出演练模式' : '进入演练模式'">
+          <mat-icon>{{ isSimulationMode ? 'science' : 'play_arrow' }}</mat-icon>
+        </button>
         <button mat-icon-button (click)="onFit()" title="适应视图">
           <mat-icon>zoom_out_map</mat-icon>
         </button>
@@ -66,6 +88,14 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
             [selectedSegmentId]="selectedSegmentId"
             [disconnectedNodes]="disconnectedNodes"
             [overloadAnchors]="overloadAnchors"
+            [highlights]="highlights"
+            [highlightPath]="highlightPathNodes"
+            [highlightPathSegments]="highlightPathSegments"
+            [blockedNodes]="blockedNodes"
+            [blockedSegments]="blockedSegments"
+            [simulatedRemovedNodes]="simulatedRemovedNodes"
+            [simulatedRemovedSegments]="simulatedRemovedSegments"
+            [isSimulationMode]="isSimulationMode"
             (nodeClick)="onNodeClick($event)"
             (nodeDblClick)="onNodeDblClick($event)"
             (segmentClick)="onSegmentClick($event)"
@@ -82,6 +112,27 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
                 <span class="legend-label">{{ type.label }}</span>
               </div>
             </div>
+            <div class="legend-divider"></div>
+            <div class="legend-items">
+              <div class="legend-item">
+                <span class="legend-shape key-anchor"></span>
+                <span class="legend-label">关键锚点</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape bottleneck"></span>
+                <span class="legend-label">瓶颈路线</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-shape safe-route"></span>
+                <span class="legend-label">安全路线</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="simulation-banner" *ngIf="isSimulationMode">
+            <mat-icon>science</mat-icon>
+            <span>演练模式 - 已移除 {{ simulatedRemovedNodes.length }} 个节点, {{ simulatedRemovedSegments.length }} 个绳段</span>
+            <button mat-button color="warn" (click)="onExitSimulation()">退出</button>
           </div>
         </div>
 
@@ -137,6 +188,7 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
                   <app-stats-panel
                     [analysis]="analysis"
                     [nodeNames]="nodeNames"
+                    [segments]="segments"
                     (nodeClick)="onNodeClick($event)"
                   ></app-stats-panel>
                   <app-path-analysis
@@ -144,7 +196,44 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
                     [paths]="selectedPaths"
                     [nodeNames]="nodeNames"
                     (nodeSelect)="onPathNodeSelect($event)"
+                    (pathHighlight)="onPathHighlight($event)"
                   ></app-path-analysis>
+                </div>
+              </mat-tab>
+              <mat-tab label="队伍">
+                <div class="tab-content">
+                  <app-team-config
+                    [config]="teamConfig"
+                    (configChange)="onTeamConfigChange($event)"
+                  ></app-team-config>
+                </div>
+              </mat-tab>
+              <mat-tab label="演练">
+                <div class="tab-content">
+                  <app-simulation-panel
+                    [nodes]="nodes"
+                    [segments]="segments"
+                    [isSimulationMode]="isSimulationMode"
+                    [simulationResult]="simulationResult"
+                    [removedNodes]="simulatedRemovedNodes"
+                    [removedSegments]="simulatedRemovedSegments"
+                    (toggleMode)="onToggleSimulation()"
+                    (nodeToggle)="onSimNodeToggle($event)"
+                    (segmentToggle)="onSimSegmentToggle($event)"
+                    (runSimulation)="onRunSimulation()"
+                  ></app-simulation-panel>
+                </div>
+              </mat-tab>
+              <mat-tab label="版本">
+                <div class="tab-content">
+                  <app-route-version-panel
+                    [versions]="routeVersions"
+                    [comparison]="routeComparison"
+                    (saveVersion)="onSaveVersion($event)"
+                    (loadVersion)="onLoadVersion($event)"
+                    (deleteVersion)="onDeleteVersion($event)"
+                    (compareVersions)="onCompareVersions($event)"
+                  ></app-route-version-panel>
                 </div>
               </mat-tab>
             </mat-tab-group>
@@ -213,13 +302,52 @@ import { OverloadConfirmDialogComponent } from './components/overload-confirm-di
       width: 14px;
       height: 14px;
       display: inline-block;
+      border-radius: 4px;
+    }
+    .legend-shape.key-anchor {
+      background: #9c27b0;
+      border-radius: 50%;
+    }
+    .legend-shape.bottleneck {
+      background: #ff9800;
+      border-radius: 2px;
+    }
+    .legend-shape.safe-route {
+      background: #00e676;
+      border-radius: 2px;
+    }
+    .legend-divider {
+      height: 1px;
+      background: rgba(0,0,0,0.1);
+      margin: 8px 0;
+    }
+    .simulation-banner {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #f44336;
+      color: white;
+      padding: 8px 20px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 10;
+      box-shadow: 0 2px 8px rgba(244, 67, 54, 0.4);
+    }
+    .simulation-banner button {
+      color: white;
+      margin-left: 8px;
     }
     .side-panel {
-      width: 360px;
-      min-width: 360px;
+      width: 380px;
+      min-width: 380px;
     }
     .sidenav {
-      width: 360px;
+      width: 380px;
     }
     .tab-content {
       height: calc(100vh - 140px);
@@ -262,6 +390,20 @@ export class AppComponent implements OnInit {
   selectedPaths: PathResult[] = [];
   disconnectedNodes: string[] = [];
   overloadAnchors: string[] = [];
+  highlights: GraphHighlight | null = null;
+
+  teamConfig: TeamConfig = { members: [], passingOrder: [], safetyFactor: 1.5 };
+
+  routeVersions: RouteVersion[] = [];
+  routeComparison: RouteComparison | null = null;
+
+  isSimulationMode = false;
+  simulatedRemovedNodes: string[] = [];
+  simulatedRemovedSegments: string[] = [];
+  simulationResult: SimulationResult | null = null;
+
+  highlightPathNodes: string[] = [];
+  highlightPathSegments: string[] = [];
 
   readonly legendItems = [
     { label: '入口', color: NODE_TYPE_MAP.entrance.color, shape: 'square' },
@@ -290,7 +432,28 @@ export class AppComponent implements OnInit {
       this.analysis = analysis;
       this.disconnectedNodes = analysis.disconnectedNodes;
       this.overloadAnchors = analysis.overloadedAnchors.map(a => a.nodeId);
+      this.highlights = analysis.highlights || null;
     });
+
+    this.caveGraphService.getTeamConfig().subscribe(config => {
+      this.teamConfig = config;
+    });
+
+    this.caveGraphService.getRouteVersions().subscribe(versions => {
+      this.routeVersions = versions;
+    });
+
+    this.caveGraphService.getSimulationMode().subscribe(mode => {
+      this.isSimulationMode = mode;
+    });
+  }
+
+  get blockedNodes(): string[] {
+    return this.nodes.filter(n => n.isBlocked).map(n => n.id);
+  }
+
+  get blockedSegments(): string[] {
+    return this.segments.filter(s => s.isBlocked).map(s => s.id);
   }
 
   get selectedNode(): CaveNode | null {
@@ -325,6 +488,8 @@ export class AppComponent implements OnInit {
     this.showNodeForm = false;
     this.showSegmentForm = false;
     this.selectedPaths = this.caveGraphService.findPathsToEntrance(nodeId);
+    this.highlightPathNodes = [];
+    this.highlightPathSegments = [];
   }
 
   onNodeDblClick(nodeId: string): void {
@@ -381,7 +546,9 @@ export class AppComponent implements OnInit {
         this.caveGraphService.updateNode(node.id, {
           name: node.name,
           type: node.type,
-          description: node.description
+          description: node.description,
+          maxLoad: node.maxLoad,
+          isBlocked: node.isBlocked
         });
         this.showSnackBar('节点已更新');
       } else {
@@ -444,6 +611,8 @@ export class AppComponent implements OnInit {
           slope: segment.slope,
           maxLoad: segment.maxLoad,
           riskLevel: segment.riskLevel,
+          traversalDirection: segment.traversalDirection,
+          isBlocked: segment.isBlocked,
           description: segment.description
         });
         this.showSnackBar('绳段已更新');
@@ -477,6 +646,84 @@ export class AppComponent implements OnInit {
     this.selectedPaths = this.caveGraphService.findPathsToEntrance(nodeId);
     this.selectedNodeId = nodeId;
     this.selectedSegmentId = null;
+    this.highlightPathNodes = [];
+    this.highlightPathSegments = [];
+  }
+
+  onPathHighlight(event: { nodes: string[]; segments: string[] }): void {
+    this.highlightPathNodes = event.nodes;
+    this.highlightPathSegments = event.segments;
+  }
+
+  onTeamConfigChange(config: TeamConfig): void {
+    this.caveGraphService.setTeamConfig(config);
+  }
+
+  onToggleSimulation(): void {
+    if (this.isSimulationMode) {
+      this.caveGraphService.exitSimulationMode();
+      this.simulationResult = null;
+      this.simulatedRemovedNodes = [];
+      this.simulatedRemovedSegments = [];
+      this.showSnackBar('已退出演练模式');
+    } else {
+      this.caveGraphService.enterSimulationMode();
+      this.showSnackBar('已进入演练模式');
+    }
+  }
+
+  onExitSimulation(): void {
+    this.onToggleSimulation();
+  }
+
+  onSimNodeToggle(nodeId: string): void {
+    if (this.simulatedRemovedNodes.includes(nodeId)) {
+      this.caveGraphService.simulateRestoreNode(nodeId);
+    } else {
+      this.caveGraphService.simulateRemoveNode(nodeId);
+    }
+    this.simulatedRemovedNodes = this.caveGraphService.simulatedRemovedNodes;
+  }
+
+  onSimSegmentToggle(segmentId: string): void {
+    if (this.simulatedRemovedSegments.includes(segmentId)) {
+      this.caveGraphService.simulateRestoreSegment(segmentId);
+    } else {
+      this.caveGraphService.simulateRemoveSegment(segmentId);
+    }
+    this.simulatedRemovedSegments = this.caveGraphService.simulatedRemovedSegments;
+  }
+
+  onRunSimulation(): void {
+    this.simulationResult = this.caveGraphService.runSimulation();
+    this.showSnackBar('模拟分析完成');
+  }
+
+  onSaveVersion(data: { name: string; description?: string }): void {
+    this.caveGraphService.saveRouteVersion(data.name, data.description);
+    this.showSnackBar('版本已保存');
+  }
+
+  onLoadVersion(versionId: string): void {
+    if (confirm('确定要加载此版本吗？当前未保存的更改将丢失。')) {
+      this.caveGraphService.loadRouteVersion(versionId);
+      this.showSnackBar('版本已加载');
+    }
+  }
+
+  onDeleteVersion(versionId: string): void {
+    if (confirm('确定要删除此版本吗？')) {
+      this.caveGraphService.deleteRouteVersion(versionId);
+      this.routeComparison = null;
+      this.showSnackBar('版本已删除');
+    }
+  }
+
+  onCompareVersions(data: { versionAId: string; versionBId: string }): void {
+    this.routeComparison = this.caveGraphService.compareRouteVersions(
+      data.versionAId,
+      data.versionBId
+    );
   }
 
   onLoadSample(): void {
@@ -485,6 +732,8 @@ export class AppComponent implements OnInit {
     this.selectedSegmentId = null;
     this.showNodeForm = false;
     this.showSegmentForm = false;
+    this.routeComparison = null;
+    this.simulationResult = null;
     this.showSnackBar('示例数据已加载');
     setTimeout(() => {
       if (this.graphComponent) {
@@ -499,6 +748,8 @@ export class AppComponent implements OnInit {
       this.selectedNodeId = null;
       this.selectedSegmentId = null;
       this.selectedPaths = [];
+      this.routeComparison = null;
+      this.simulationResult = null;
       this.showSnackBar('所有数据已清空');
     }
   }

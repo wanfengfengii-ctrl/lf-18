@@ -8,7 +8,8 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatCardModule } from '@angular/material/card';
 import { MatSliderModule } from '@angular/material/slider';
-import { RopeSegment, RiskLevel, RISK_LEVEL_MAP, CaveNode } from '../../models/cave-graph.model';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { RopeSegment, RiskLevel, RISK_LEVEL_MAP, CaveNode, TraversalDirection } from '../../models/cave-graph.model';
 
 @Component({
   selector: 'app-segment-editor',
@@ -22,7 +23,8 @@ import { RopeSegment, RiskLevel, RISK_LEVEL_MAP, CaveNode } from '../../models/c
     MatButtonModule,
     MatIconModule,
     MatCardModule,
-    MatSliderModule
+    MatSliderModule,
+    MatCheckboxModule
   ],
   template: `
     <mat-card class="segment-editor">
@@ -102,6 +104,23 @@ import { RopeSegment, RiskLevel, RISK_LEVEL_MAP, CaveNode } from '../../models/c
           </mat-form-field>
 
           <mat-form-field appearance="fill" class="full-width">
+            <mat-label>通行方向</mat-label>
+            <mat-select formControlName="traversalDirection">
+              <mat-option value="bidirectional">双向通行</mat-option>
+              <mat-option value="sourceToTarget">仅起点→终点</mat-option>
+              <mat-option value="targetToSource">仅终点→起点</mat-option>
+            </mat-select>
+            <mat-hint>设置绳段的通行方向限制</mat-hint>
+          </mat-form-field>
+
+          <div class="block-toggle">
+            <mat-checkbox formControlName="isBlocked">
+              <span class="block-label">临时封锁此绳段</span>
+            </mat-checkbox>
+            <span class="block-hint">封锁后该绳段在路径计算中将被忽略</span>
+          </div>
+
+          <mat-form-field appearance="fill" class="full-width">
             <mat-label>描述</mat-label>
             <textarea matInput formControlName="description" rows="2"></textarea>
           </mat-form-field>
@@ -165,6 +184,24 @@ import { RopeSegment, RiskLevel, RISK_LEVEL_MAP, CaveNode } from '../../models/c
       margin-right: 8px;
       vertical-align: middle;
     }
+    .block-toggle {
+      margin: 12px 0;
+      padding: 12px;
+      background: rgba(244, 67, 54, 0.08);
+      border-radius: 8px;
+      border-left: 4px solid #f44336;
+    }
+    .block-label {
+      font-weight: 500;
+      color: #d32f2f;
+    }
+    .block-hint {
+      display: block;
+      font-size: 11px;
+      color: rgba(0, 0, 0, 0.6);
+      margin-top: 4px;
+      margin-left: 28px;
+    }
   `]
 })
 export class SegmentEditorComponent implements OnInit, OnChanges {
@@ -217,6 +254,8 @@ export class SegmentEditorComponent implements OnInit, OnChanges {
       slope: [0],
       maxLoad: [200, [Validators.required, Validators.min(1)]],
       riskLevel: ['medium' as RiskLevel, [Validators.required]],
+      traversalDirection: ['bidirectional' as TraversalDirection, [Validators.required]],
+      isBlocked: [false],
       description: ['']
     }, { validators: this.sameNodeValidator });
   }
@@ -243,6 +282,8 @@ export class SegmentEditorComponent implements OnInit, OnChanges {
         slope: this.segment.slope,
         maxLoad: this.segment.maxLoad,
         riskLevel: this.segment.riskLevel,
+        traversalDirection: this.segment.traversalDirection || 'bidirectional',
+        isBlocked: this.segment.isBlocked || false,
         description: this.segment.description || ''
       });
     } else {
@@ -253,6 +294,8 @@ export class SegmentEditorComponent implements OnInit, OnChanges {
         slope: 0,
         maxLoad: 200,
         riskLevel: 'medium',
+        traversalDirection: 'bidirectional',
+        isBlocked: false,
         description: ''
       });
     }
@@ -270,6 +313,8 @@ export class SegmentEditorComponent implements OnInit, OnChanges {
       slope: parseFloat(formValue.slope),
       maxLoad: parseFloat(formValue.maxLoad),
       riskLevel: formValue.riskLevel,
+      traversalDirection: formValue.traversalDirection as TraversalDirection,
+      isBlocked: formValue.isBlocked || false,
       description: formValue.description || undefined
     };
 

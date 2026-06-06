@@ -7,6 +7,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatCardModule } from '@angular/material/card';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { CaveNode, NodeType, NODE_TYPE_MAP } from '../../models/cave-graph.model';
 
 @Component({
@@ -20,7 +21,8 @@ import { CaveNode, NodeType, NODE_TYPE_MAP } from '../../models/cave-graph.model
     MatSelectModule,
     MatButtonModule,
     MatIconModule,
-    MatCardModule
+    MatCardModule,
+    MatCheckboxModule
   ],
   template: `
     <mat-card class="node-editor">
@@ -70,6 +72,13 @@ import { CaveNode, NodeType, NODE_TYPE_MAP } from '../../models/cave-graph.model
             </mat-error>
           </mat-form-field>
 
+          <div class="block-toggle" *ngIf="isEditing">
+            <mat-checkbox formControlName="isBlocked">
+              <span class="block-label">临时封锁此节点</span>
+            </mat-checkbox>
+            <span class="block-hint">封锁后该节点在路径计算中将被忽略</span>
+          </div>
+
           <mat-form-field appearance="fill" class="full-width">
             <mat-label>描述</mat-label>
             <textarea matInput formControlName="description" rows="2"></textarea>
@@ -112,6 +121,24 @@ import { CaveNode, NodeType, NODE_TYPE_MAP } from '../../models/cave-graph.model
       border-radius: 50%;
       margin-right: 8px;
       vertical-align: middle;
+    }
+    .block-toggle {
+      margin: 12px 0;
+      padding: 12px;
+      background: rgba(244, 67, 54, 0.08);
+      border-radius: 8px;
+      border-left: 4px solid #f44336;
+    }
+    .block-label {
+      font-weight: 500;
+      color: #d32f2f;
+    }
+    .block-hint {
+      display: block;
+      font-size: 11px;
+      color: rgba(0, 0, 0, 0.6);
+      margin-top: 4px;
+      margin-left: 28px;
     }
   `]
 })
@@ -156,6 +183,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
       name: ['', [Validators.required]],
       type: ['platform' as NodeType, [Validators.required]],
       maxLoad: [null],
+      isBlocked: [false],
       description: [''],
       x: [0],
       y: [0]
@@ -169,6 +197,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
         name: this.node.name,
         type: this.node.type,
         maxLoad: this.node.maxLoad ?? null,
+        isBlocked: this.node.isBlocked || false,
         description: this.node.description || '',
         x: this.node.x,
         y: this.node.y
@@ -179,6 +208,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
         name: '',
         type: 'platform',
         maxLoad: null,
+        isBlocked: false,
         description: '',
         x: this.defaultPosition.x,
         y: this.defaultPosition.y
@@ -237,6 +267,7 @@ export class NodeEditorComponent implements OnInit, OnChanges {
       name: formValue.name,
       type: formValue.type,
       maxLoad: formValue.type === 'anchor' ? parseFloat(formValue.maxLoad) : undefined,
+      isBlocked: formValue.isBlocked || false,
       description: formValue.description || undefined,
       x: formValue.x,
       y: formValue.y
